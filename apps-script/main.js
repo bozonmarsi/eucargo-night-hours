@@ -294,9 +294,16 @@ function nhReport_(st) {
   return msg;
 }
 
-/** Сетка листа плана в формате NightHours.planTimelines: [[{t, bg, span, cov}]]. */
-function nhGridFromSheet(display, backgrounds, merges) {
-  const g = display.map((row, i) => row.map((t, j) => ({ t: String(t || ''), bg: (backgrounds[i] && backgrounds[i][j]) || null, span: 1, cov: false })));
+/**
+ * Сетка листа плана в формате NightHours.planTimelines: [[{t, bg, span, cov, d?}]].
+ * dates — даты ячеек (ms UTC) там, где в ячейке настоящая дата (заголовки дней).
+ */
+function nhGridFromSheet(display, backgrounds, merges, dates) {
+  const g = display.map((row, i) => row.map((t, j) => {
+    const c = { t: String(t || ''), bg: (backgrounds[i] && backgrounds[i][j]) || null, span: 1, cov: false };
+    if (dates && dates[i] && dates[i][j] != null) c.d = dates[i][j];
+    return c;
+  }));
   for (const m of merges) {
     // m: {row, col, rows, cols} — от нуля
     const top = g[m.row] && g[m.row][m.col];
@@ -311,24 +318,38 @@ function nhGridFromSheet(display, backgrounds, merges) {
   return g;
 }
 
+/** Дата ячейки: настоящая дата -> ms UTC полночи; иначе разбор текста. */
+function nhCellDate_(value, text, tz) {
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    const [y, m, d] = Utilities.formatDate(value, tz, 'yyyy-M-d').split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  }
+  return NightHours.headerDate(text);
+}
+
 function nhReadPlan_(planId, fromTs, toTs) {
   const ss = SpreadsheetApp.openById(planId);
-  const sheets = [];
+  const tz = ss.getSpreadsheetTimeZone ? ss.getSpreadsheetTimeZone() : Session.getScriptTimeZone();
+  const sheets = [], seen = [];
   for (const sh of ss.getSheets()) {
-    if (!/KW/i.test(sh.getName())) continue;
     const lastCol = Math.min(sh.getLastColumn(), 400), lastRow = sh.getLastRow();
-    if (lastRow < 3 || lastCol < 25) continue;
-    // по заголовку решаем, нужна ли неделя
-    const hdr = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-    let weekStart = null;
-    for (const h of hdr) {
-      const m = /([^\s,]+)\s+(\d{1,2}),\s*(\d{4})/.exec(h || '');
-      if (m && NightHours.czMonth(m[1])) { weekStart = Date.UTC(+m[3], NightHours.czMonth(m[1]) - 1, +m[2]); break; }
-    }
-    if (weekStart === null || weekStart > toTs || weekStart + 7 * 86400000 < fromTs) continue;
+    if (lastRow < 3 || lastCol < 25) { seen.push(sh.getName() + ' (пустой)'); continue; }
+    // первая дата в первой строке — понедельник недели
+    const hr = sh.getRange(1, 1, 1, lastCol);
+    const hv = hr.getValues()[0], ht = hr.getDisplayValues()[0];
+    const hdates = hv.map((v, j) => nhCellDate_(v, ht[j], tz));
+    const weekStart = hdates.find((d) => d != null);
+    if (weekStart == null) { seen.push(sh.getName() + ' (нет дат в 1-й строке: «' + (ht[1] || ht[0] || '') + '»)'); continue; }
+    seen.push(sh.getName());
+    if (weekStart > toTs || weekStart + 7 * 86400000 < fromTs) continue;
     const range = sh.getRange(1, 1, lastRow, lastCol);
     const merges = range.getMergedRanges().map((r) => ({ row: r.getRow() - 1, col: r.getColumn() - 1, rows: r.getNumRows(), cols: r.getNumColumns() }));
-    sheets.push({ name: sh.getName(), rows: nhGridFromSheet(range.getDisplayValues(), range.getBackgrounds(), merges) });
+    const dates = [hdates];
+    sheets.push({ name: sh.getName(), rows: nhGridFromSheet(range.getDisplayValues(), range.getBackgrounds(), merges, dates) });
+  }
+  if (!sheets.length) {
+    throw new Error('В файле плана нет недель за этот месяц. Листы в файле: ' + seen.slice(0, 12).join('; ') +
+      '. Проверьте, что в первой строке листа стоят даты дней.');
   }
   return sheets;
 }
