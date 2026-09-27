@@ -16,4 +16,7 @@ const full = `<!doctype html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\
 fs.writeFileSync(path.join(root, 'dist/night-hours.html'), full);
 // index.html — для GitHub Pages.
 fs.writeFileSync(path.join(root, 'dist/index.html'), full);
-console.log('dist/night-hours.html', full.length, 'байт');
+// Скрипт для Google Таблицы: ядро + меню.
+const gs = `// Ночные часы водителей — Google Apps Script. Собрано из src/core.js и apps-script/main.js.\n${core}\n${fs.readFileSync(path.join(root, 'apps-script/main.js'), 'utf8')}`;
+fs.writeFileSync(path.join(root, 'dist/NightHours.gs'), gs);
+console.log('dist/night-hours.html', full.length, 'байт; dist/NightHours.gs', gs.length, 'байт');
