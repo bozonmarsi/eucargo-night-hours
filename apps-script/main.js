@@ -6,7 +6,7 @@
  * После обновления таблицы появится меню «Ночные часы». Еженедельный запуск включается из этого меню.
  */
 
-/* global SpreadsheetApp, PropertiesService, Session, Utilities, ScriptApp, LockService, MailApp, NightHours */
+/* global SpreadsheetApp, PropertiesService, Session, Utilities, ScriptApp, LockService, MailApp, DriveApp, Drive, NightHours */
 /*
  * В черновике: наведите на ячейку — пояснение, откуда цифра.
  * Жёлтая ячейка — ночь глубоко внутри длинного рейса без REST (проверить), оранжевая — план изменили задним числом.
@@ -30,13 +30,77 @@ function onOpen() {
 
 function nhSetPlan() {
   const ui = SpreadsheetApp.getUi();
-  const cur = PropertiesService.getDocumentProperties().getProperty('PLAN_ID') || '';
-  const r = ui.prompt('Диспетчерский план', 'Вставьте ссылку на Google Таблицу с планом (листы KW..).' + (cur ? '\nСейчас: ' + cur : ''), ui.ButtonSet.OK_CANCEL);
+  const cur = nhPlanSourceSetting_();
+  const r = ui.prompt('Диспетчерский план',
+    'Вставьте ссылку на ПАПКУ Google Диска, куда раз в неделю кладётся файл плана (.xlsx или .ods) — скрипт возьмёт самый новый.\n' +
+    'Или ссылку на Google Таблицу с планом.' + (cur ? '\nСейчас: ' + cur.type + ' ' + cur.id : ''), ui.ButtonSet.OK_CANCEL);
   if (r.getSelectedButton() !== ui.Button.OK) return;
-  const m = /\/d\/([a-zA-Z0-9_-]+)/.exec(r.getResponseText()) || /^([a-zA-Z0-9_-]{20,})$/.exec(r.getResponseText().trim());
-  if (!m) { ui.alert('Не похоже на ссылку Google Таблицы.'); return; }
-  PropertiesService.getDocumentProperties().setProperty('PLAN_ID', m[1]);
-  ui.alert('Сохранено. Теперь можно заполнить лист или включить еженедельный расчёт.');
+  const t = r.getResponseText().trim();
+  let src = null, m;
+  if ((m = /\/folders\/([a-zA-Z0-9_-]+)/.exec(t))) src = { type: 'folder', id: m[1] };
+  else if ((m = /\/d\/([a-zA-Z0-9_-]+)/.exec(t))) src = { type: 'sheet', id: m[1] };
+  if (!src) { ui.alert('Не похоже на ссылку на папку Google Диска или Google Таблицу.'); return; }
+  PropertiesService.getDocumentProperties().setProperty('PLAN_SRC', JSON.stringify(src));
+  let msg = 'Сохранено.';
+  try { const f = nhPlanFile_(src); msg += `\nСейчас будет использоваться: «${f.name}» от ${Utilities.formatDate(f.updated, Session.getScriptTimeZone(), 'dd.MM.yyyy HH:mm')}.`; }
+  catch (e) { msg += '\nНо файл плана пока не найден: ' + e.message; }
+  ui.alert(msg);
+}
+
+function nhPlanSourceSetting_() {
+  const p = PropertiesService.getDocumentProperties();
+  const s = p.getProperty('PLAN_SRC');
+  if (s) return JSON.parse(s);
+  const old = p.getProperty('PLAN_ID');                      // старая настройка — ссылка на таблицу
+  return old ? { type: 'sheet', id: old } : null;
+}
+
+const NH_PLAN_TYPES = {
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+  'application/vnd.google-apps.spreadsheet': 'gsheet',
+};
+
+/** Файл плана: самый новый .xlsx/.ods/Google Таблица в папке, либо указанная таблица. */
+function nhPlanFile_(src) {
+  if (src.type === 'sheet') {
+    const f = DriveApp.getFileById(src.id);
+    return { id: src.id, name: f.getName(), updated: f.getLastUpdated(), kind: NH_PLAN_TYPES[f.getMimeType()] || 'gsheet' };
+  }
+  const it = DriveApp.getFolderById(src.id).getFiles();
+  let best = null;
+  while (it.hasNext()) {
+    const f = it.next();
+    const kind = NH_PLAN_TYPES[f.getMimeType()];
+    if (!kind) continue;
+    if (!best || f.getLastUpdated() > best.updated) best = { id: f.getId(), name: f.getName(), updated: f.getLastUpdated(), kind };
+  }
+  if (!best) throw new Error('в папке нет файлов .xlsx, .ods или Google Таблиц');
+  return best;
+}
+
+/**
+ * Читает план и возвращает водителей. Excel/ODS не трогается: из его копии делается
+ * временная Google Таблица, читается и сразу удаляется.
+ */
+function nhLoadPlan_(fromTs, toTs) {
+  const src = nhPlanSourceSetting_();
+  if (!src) throw new Error('Не указан диспетчерский план (меню «Ночные часы → Указать ссылку на диспетчерский план»).');
+  const file = nhPlanFile_(src);
+  let sheetId = file.id, tmp = null;
+  if (file.kind !== 'gsheet') {
+    const blob = DriveApp.getFileById(file.id).getBlob();
+    tmp = Drive.Files.create({ name: 'Ночные часы — временная копия плана', mimeType: 'application/vnd.google-apps.spreadsheet' }, blob);
+    sheetId = tmp.id;
+  }
+  try {
+    const drivers = NightHours.planTimelines(nhReadPlan_(sheetId, fromTs, toTs));
+    const ageDays = (Date.now() - file.updated.getTime()) / 86400000;
+    return { drivers, file, stale: ageDays > 8 };
+  } finally {
+    if (tmp) { try { Drive.Files.remove(tmp.id); } catch (e) { /* временная копия удалится при следующем запуске вручную */ } }
+  }
 }
 
 /** Основной лист месяца для активного листа (активный может быть черновиком). */
@@ -225,6 +289,8 @@ function nhToday_() { const d = new Date(); return Date.UTC(d.getFullYear(), d.g
 function nhReport_(st) {
   let msg = `записано ${st.filled}, обновлено ${st.updated}, оставлено как есть ${st.kept} (ручные правки и off), подсвечено для проверки ${st.flagged ? st.flagged.length : 0}.`;
   if (st.missing.length) msg += ` Нет в плане: ${st.missing.join(', ')}.`;
+  if (st.plan) msg += ` План: «${st.plan.name}» от ${Utilities.formatDate(st.plan.updated, Session.getScriptTimeZone(), 'dd.MM.yyyy')}.`;
+  if (st.stale) msg += ' ⚠ Файл плана старше недели — положите свежий в папку.';
   return msg;
 }
 
@@ -298,12 +364,11 @@ function nhBonusLayout_(sheet) {
  * Какие ячейки записал скрипт, хранится в свойствах документа (AUTO_<id листа>).
  */
 function nhFillSheet_(sheet, opt) {
-  const planId = PropertiesService.getDocumentProperties().getProperty('PLAN_ID');
-  if (!planId) throw new Error('Не указана ссылка на диспетчерский план (меню «Ночные часы»).');
   const L = nhBonusLayout_(sheet);
   const from = Date.UTC(L.year, L.month - 1, 1) - 8 * 86400000;
   const to = Date.UTC(L.year, L.month, 1) + 2 * 86400000;
-  const drivers = NightHours.planTimelines(nhReadPlan_(planId, from, to));
+  const plan = nhLoadPlan_(from, to);
+  const drivers = plan.drivers;
 
   const props = PropertiesService.getDocumentProperties();
   const autoKey = 'AUTO_' + sheet.getSheetId();
@@ -320,7 +385,7 @@ function nhFillSheet_(sheet, opt) {
   const main = opt.main || null;
   const base = main ? main.getRange(2, c0 + 1, lastRow - 1, c1 - c0 + 1).getBackgrounds() : null;
   const baseAt = (r, c) => (base && base[r] && base[r][c]) || '#ffffff';
-  const st = { filled: 0, updated: 0, kept: 0, missing: [], flagged: [] };
+  const st = { filled: 0, updated: 0, kept: 0, missing: [], flagged: [], plan: plan.file, stale: plan.stale };
   names.forEach((name, r) => {
     if (!name.trim()) return;
     const drv = NightHours.planDriverFor(drivers, name);
