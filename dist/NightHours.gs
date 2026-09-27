@@ -1020,11 +1020,13 @@ function nhLoadPlan_(fromTs, toTs) {
   const file = nhPlanFile_(src);
   let sheetId = file.id, tmp = null;
   if (file.kind !== 'gsheet') {
+    nhProgress_(`1/3 Делаю временную копию «${file.name}»…`);
     const blob = DriveApp.getFileById(file.id).getBlob();
     tmp = Drive.Files.create({ name: 'Ночные часы — временная копия плана', mimeType: 'application/vnd.google-apps.spreadsheet' }, blob);
     sheetId = tmp.id;
   }
   try {
+    nhProgress_('2/3 Читаю недели плана…');
     const drivers = NightHours.planTimelines(nhReadPlan_(sheetId, fromTs, toTs));
     const ageDays = (Date.now() - file.updated.getTime()) / 86400000;
     return { drivers, file, stale: ageDays > 8 };
@@ -1066,9 +1068,11 @@ function nhDraftOf_(main) {
 function nhFillNow() {
   const ui = SpreadsheetApp.getUi();
   const main = nhMainOf_(SpreadsheetApp.getActiveSheet());
-  nhBonusLayout_(main);
+  const L = nhBonusLayout_(main);
+  // сначала читаем план: если с ним проблема, пустой черновик не создаётся
+  const plan = nhLoadPlan_(Date.UTC(L.year, L.month - 1, 1) - 8 * 86400000, Date.UTC(L.year, L.month, 1) + 2 * 86400000);
   const draft = nhDraftOf_(main);
-  const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main });
+  const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main, plan });
   SpreadsheetApp.getActive().setActiveSheet(draft);
   ui.alert('Ночные часы', `«${draft.getName()}»: ` + nhReport_(st), ui.ButtonSet.OK);
 }
@@ -1214,6 +1218,11 @@ function nhEnsureMonthSheet_(ss, year, month) {
   return sh;
 }
 
+function nhProgress_(msg) {
+  try { SpreadsheetApp.getActive().toast(msg, 'Ночные часы', 60); } catch (e) { /* по расписанию окна нет */ }
+  console.log(msg);
+}
+
 function nhToday_() { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
 
 function nhReport_(st) {
@@ -1276,6 +1285,7 @@ function nhReadPlan_(planId, fromTs, toTs) {
     const merges = range.getMergedRanges().map((r) => ({ row: r.getRow() - 1, col: r.getColumn() - 1, rows: r.getNumRows(), cols: r.getNumColumns() }));
     const dates = [hdates];
     sheets.push({ name: sh.getName(), rows: nhGridFromSheet(range.getDisplayValues(), range.getBackgrounds(), merges, dates) });
+    nhProgress_(`2/3 Прочитан лист «${sh.getName()}»`);
   }
   if (!sheets.length) {
     throw new Error('В файле плана нет недель за этот месяц. Листы в файле: ' + seen.slice(0, 12).join('; ') +
@@ -1318,8 +1328,9 @@ function nhFillSheet_(sheet, opt) {
   const L = nhBonusLayout_(sheet);
   const from = Date.UTC(L.year, L.month - 1, 1) - 8 * 86400000;
   const to = Date.UTC(L.year, L.month, 1) + 2 * 86400000;
-  const plan = nhLoadPlan_(from, to);
+  const plan = opt.plan || nhLoadPlan_(from, to);
   const drivers = plan.drivers;
+  nhProgress_('3/3 Записываю черновик…');
 
   const props = PropertiesService.getDocumentProperties();
   const autoKey = 'AUTO_' + sheet.getSheetId();
