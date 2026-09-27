@@ -306,7 +306,7 @@ function run(){
   const used = new Set();
   const make = (name, ref, extra) => {
     const key = NH.normName(name);
-    const drv = S.plan ? S.plan.get(key) : null;
+    const drv = S.plan ? NH.planDriverFor(S.plan, name) : null;
     const card = cardBy.get(key) || null;
     used.add(key);
     return {

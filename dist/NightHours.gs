@@ -729,6 +729,42 @@
     return drivers;
   }
 
+  /**
+   * Водитель плана по имени из таблицы доплат. Находит и строки экипажей
+   * («Andrii Kuziev Antonina Ivanchuk», «Holikov + Dekhkonov»): все слова имени должны быть в подписи.
+   * Если водитель стоит в нескольких строках, часы объединяются (рейс важнее отдыха, отдых — пустоты).
+   */
+  function planDriverFor(drivers, name) {
+    const key = normName(name);
+    if (!key) return null;
+    if (!drivers._byName) drivers._byName = new Map();
+    if (drivers._byName.has(key)) return drivers._byName.get(key);
+    const want = key.split(' ');
+    const matches = [];
+    for (const [k, d] of drivers) {
+      if (k === key) { matches.unshift(d); continue; }
+      const have = k.split(' ');
+      if (have.length <= want.length) continue;
+      const pool = [...have];
+      if (want.every((w) => { const i = pool.indexOf(w); if (i < 0) return false; pool.splice(i, 1); return true; })) matches.push(d);
+    }
+    let res = null;
+    if (matches.length === 1) res = matches[0];
+    else if (matches.length > 1) {
+      const rank = { work: 3, rest: 2, off: 1, empty: 0 };
+      const hours = new Map();
+      for (const d of matches) {
+        for (const [t, e] of d.hours) {
+          const cur = hours.get(t);
+          if (!cur || rank[e.kind] > rank[cur.kind] || (!cur.truck && e.truck && rank[e.kind] === rank[cur.kind])) hours.set(t, e);
+        }
+      }
+      res = { name: matches[0].name, hours };
+    }
+    drivers._byName.set(key, res);
+    return res;
+  }
+
   /** Итоговая классификация часа с учётом строки машины и правила «s». */
   function resolvePlan(hoursMap) {
     const ts = [...hoursMap.keys()].sort((a, b) => a - b);
@@ -816,7 +852,7 @@
     DEFAULTS, ACT, readZip, parseDriverCard, mergeCards, nightHours, nightTimeline,
     roundHours, normName, parseCsv, decodeText, parseDispatchPlan, planHint, czMonth,
     parseBonusTable, parseNum, fmtNum, localToUtc, segments, blocks, applyPauseRule,
-    readOds, readXlsx, bonusFromXlsx, planTimelines, resolvePlan, planNightHours, planDay, PLAN_RULES,
+    readOds, readXlsx, bonusFromXlsx, planTimelines, planDriverFor, resolvePlan, planNightHours, planDay, PLAN_RULES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightHours = api;
@@ -1038,6 +1074,11 @@ function nhBonusLayout_(sheet) {
     else if (Object.prototype.toString.call(v) === '[object Date]') {
       const [y, m, d] = Utilities.formatDate(v, tz, 'yyyy-M-d').split('-').map(Number);
       days.push({ col: i, day: d }); year = y; month = m;
+    } else if (typeof v === 'string' && /^\s*\d{1,2}\.\d{1,2}\.?(\d{4})?\s*$/.test(v)) {
+      // дата текстом «01.09» или «01.09.2026»; год — из текста, названия листа или текущий
+      const m = /^\s*(\d{1,2})\.(\d{1,2})\.?(\d{4})?/.exec(v);
+      const y = m[3] ? +m[3] : +((/(20\d\d)/.exec(sheet.getName()) || [])[1] || new Date().getFullYear());
+      days.push({ col: i, day: +m[1] }); year = y; month = +m[2];
     }
   });
   if (nameCol < 0 || !days.length) throw new Error('На этом листе нет строки «Имя:» с датами. Откройте лист месяца.');
@@ -1071,7 +1112,7 @@ function nhFillSheet_(sheet, opt) {
   const st = { filled: 0, updated: 0, kept: 0, missing: [] };
   names.forEach((name, r) => {
     if (!name.trim()) return;
-    const drv = drivers.get(NightHours.normName(name));
+    const drv = NightHours.planDriverFor(drivers, name);
     if (!drv) { if (!values[r].some((v) => typeof v === 'string' && v.trim())) st.missing.push(name.trim()); return; }
     const key = NightHours.normName(name);
     const res = NightHours.planNightHours(drv, L.year, L.month);

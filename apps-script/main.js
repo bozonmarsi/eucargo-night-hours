@@ -214,6 +214,11 @@ function nhBonusLayout_(sheet) {
     else if (Object.prototype.toString.call(v) === '[object Date]') {
       const [y, m, d] = Utilities.formatDate(v, tz, 'yyyy-M-d').split('-').map(Number);
       days.push({ col: i, day: d }); year = y; month = m;
+    } else if (typeof v === 'string' && /^\s*\d{1,2}\.\d{1,2}\.?(\d{4})?\s*$/.test(v)) {
+      // дата текстом «01.09» или «01.09.2026»; год — из текста, названия листа или текущий
+      const m = /^\s*(\d{1,2})\.(\d{1,2})\.?(\d{4})?/.exec(v);
+      const y = m[3] ? +m[3] : +((/(20\d\d)/.exec(sheet.getName()) || [])[1] || new Date().getFullYear());
+      days.push({ col: i, day: +m[1] }); year = y; month = +m[2];
     }
   });
   if (nameCol < 0 || !days.length) throw new Error('На этом листе нет строки «Имя:» с датами. Откройте лист месяца.');
@@ -247,7 +252,7 @@ function nhFillSheet_(sheet, opt) {
   const st = { filled: 0, updated: 0, kept: 0, missing: [] };
   names.forEach((name, r) => {
     if (!name.trim()) return;
-    const drv = drivers.get(NightHours.normName(name));
+    const drv = NightHours.planDriverFor(drivers, name);
     if (!drv) { if (!values[r].some((v) => typeof v === 'string' && v.trim())) st.missing.push(name.trim()); return; }
     const key = NightHours.normName(name);
     const res = NightHours.planNightHours(drv, L.year, L.month);

@@ -728,6 +728,42 @@
     return drivers;
   }
 
+  /**
+   * Водитель плана по имени из таблицы доплат. Находит и строки экипажей
+   * («Andrii Kuziev Antonina Ivanchuk», «Holikov + Dekhkonov»): все слова имени должны быть в подписи.
+   * Если водитель стоит в нескольких строках, часы объединяются (рейс важнее отдыха, отдых — пустоты).
+   */
+  function planDriverFor(drivers, name) {
+    const key = normName(name);
+    if (!key) return null;
+    if (!drivers._byName) drivers._byName = new Map();
+    if (drivers._byName.has(key)) return drivers._byName.get(key);
+    const want = key.split(' ');
+    const matches = [];
+    for (const [k, d] of drivers) {
+      if (k === key) { matches.unshift(d); continue; }
+      const have = k.split(' ');
+      if (have.length <= want.length) continue;
+      const pool = [...have];
+      if (want.every((w) => { const i = pool.indexOf(w); if (i < 0) return false; pool.splice(i, 1); return true; })) matches.push(d);
+    }
+    let res = null;
+    if (matches.length === 1) res = matches[0];
+    else if (matches.length > 1) {
+      const rank = { work: 3, rest: 2, off: 1, empty: 0 };
+      const hours = new Map();
+      for (const d of matches) {
+        for (const [t, e] of d.hours) {
+          const cur = hours.get(t);
+          if (!cur || rank[e.kind] > rank[cur.kind] || (!cur.truck && e.truck && rank[e.kind] === rank[cur.kind])) hours.set(t, e);
+        }
+      }
+      res = { name: matches[0].name, hours };
+    }
+    drivers._byName.set(key, res);
+    return res;
+  }
+
   /** Итоговая классификация часа с учётом строки машины и правила «s». */
   function resolvePlan(hoursMap) {
     const ts = [...hoursMap.keys()].sort((a, b) => a - b);
@@ -815,7 +851,7 @@
     DEFAULTS, ACT, readZip, parseDriverCard, mergeCards, nightHours, nightTimeline,
     roundHours, normName, parseCsv, decodeText, parseDispatchPlan, planHint, czMonth,
     parseBonusTable, parseNum, fmtNum, localToUtc, segments, blocks, applyPauseRule,
-    readOds, readXlsx, bonusFromXlsx, planTimelines, resolvePlan, planNightHours, planDay, PLAN_RULES,
+    readOds, readXlsx, bonusFromXlsx, planTimelines, planDriverFor, resolvePlan, planNightHours, planDay, PLAN_RULES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightHours = api;

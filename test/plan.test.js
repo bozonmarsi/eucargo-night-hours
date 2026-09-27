@@ -123,3 +123,21 @@ test('таблица доплат из .xlsx: даты-числа в загол�
   assert.strictEqual(m.rows[0].values[1], '2');
   assert.strictEqual(m.rows[0].values[2], '4,5');
 });
+
+test('план: водитель находится и в строке экипажа, часы объединяются', async () => {
+  const sheets = await NH.readOds(ods([
+    rowXml('1ABC 123\n9XX 0001', []),
+    rowXml('Ivan Testenko + Petro Prykladov', [{ h: H(7, 22), span: 4, text: 'AAA-BBB', style: 'blue' }]),
+    rowXml('1ABC 124\n9XX 0002', []),
+    rowXml('Ivan\nTestenko', [{ h: H(9, 0), span: 3, text: 'BBB-AAA', style: 'blue' }]),
+  ]));
+  const drivers = NH.planTimelines(sheets);
+  const ivan = NH.planDriverFor(drivers, 'Ivan Testenko');
+  const petro = NH.planDriverFor(drivers, 'Petro Prykladov');
+  const ri = NH.planNightHours(ivan, 2026, 9), rp = NH.planNightHours(petro, 2026, 9);
+  assert.strictEqual(ri[6].hours, 2);  // 07.09 из строки экипажа
+  assert.strictEqual(ri[7].hours, 2);  // 08.09 00–02 из строки экипажа
+  assert.strictEqual(ri[8].hours, 3);  // 09.09 из своей строки
+  assert.strictEqual(rp[6].hours, 2);
+  assert.strictEqual(NH.planDriverFor(drivers, 'Taras Nikto'), null);
+});

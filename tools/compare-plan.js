@@ -17,7 +17,7 @@ const NH = require('../src/core.js');
   for (const mo of months) {
     const s = { n: 0, ok: 0, near: 0 };
     for (const row of mo.rows) {
-      const drv = drivers.get(NH.normName(row.name));
+      const drv = NH.planDriverFor(drivers, row.name);
       if (!drv) { missing.add(row.name); continue; }
       const res = NH.planNightHours(drv, mo.year, mo.month);
       for (const r of res) {
