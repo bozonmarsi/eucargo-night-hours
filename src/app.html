@@ -1,0 +1,515 @@
+<title>Ночные часы водителей</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#F3F5F4; --panel:#FFFFFF; --ink:#18212B; --muted:#5B6773; --line:#D9DFE1;
+  --accent:#C77B00; --accent-ink:#FFFFFF;
+  --night:#26336B; --night-soft:#E6E9F5;
+  --drive:#26336B; --work:#4F7CAC; --avail:#9CB4D3; --rest:#E4E8EA; --unknown:repeating-linear-gradient(45deg,#C9CFD3 0 4px,#EEF1F2 4px 8px);
+  --ok:#2F7D4F; --warn:#B7791F; --bad:#B23A3A; --warn-bg:#FFF4DE; --bad-bg:#FBE9E9; --diff-bg:#FFF0C7;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#12171D; --panel:#1A2129; --ink:#E6EAEE; --muted:#9AA6B2; --line:#2C3640;
+    --accent:#F0A12B; --accent-ink:#17120A;
+    --night:#8FA2F0; --night-soft:#232C4A;
+    --drive:#7F93E8; --work:#6C9BD0; --avail:#44628A; --rest:#27313B; --unknown:repeating-linear-gradient(45deg,#3A444E 0 4px,#232B33 4px 8px);
+    --ok:#5DBB83; --warn:#E3A948; --bad:#E07070; --warn-bg:#3A2E16; --bad-bg:#3A1F22; --diff-bg:#3D3515;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#12171D; --panel:#1A2129; --ink:#E6EAEE; --muted:#9AA6B2; --line:#2C3640;
+  --accent:#F0A12B; --accent-ink:#17120A;
+  --night:#8FA2F0; --night-soft:#232C4A;
+  --drive:#7F93E8; --work:#6C9BD0; --avail:#44628A; --rest:#27313B; --unknown:repeating-linear-gradient(45deg,#3A444E 0 4px,#232B33 4px 8px);
+  --ok:#5DBB83; --warn:#E3A948; --bad:#E07070; --warn-bg:#3A2E16; --bad-bg:#3A1F22; --diff-bg:#3D3515;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:14px/1.5 var(--sans);margin:0}
+.wrap{max-width:1500px;margin:0 auto;padding-inline:20px;padding-block:20px 48px;display:grid;gap:20px}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px;border-bottom:2px solid var(--ink);padding-bottom:10px}
+h1{font:600 30px/1.1 var(--display);letter-spacing:.01em;margin:0;text-wrap:balance}
+h1 .band{color:var(--night)}
+header p{margin:0;color:var(--muted);max-width:70ch}
+h2{font:600 19px/1.2 var(--display);letter-spacing:.02em;text-transform:uppercase;margin:0}
+.grid{display:grid;grid-template-columns:minmax(260px,330px) 1fr;gap:20px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.side{display:grid;gap:14px}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:10px}
+.drop{border:1.5px dashed var(--line);border-radius:6px;padding:12px;display:grid;gap:4px;cursor:pointer;transition:border-color .15s,background .15s}
+.drop:hover,.drop.over{border-color:var(--accent);background:var(--night-soft)}
+.drop:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.drop b{font-weight:600}
+.drop .hint{color:var(--muted);font-size:12.5px}
+.drop .got{font:12px/1.4 var(--mono);color:var(--ok)}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+.opt{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-left:6px}
+label.f{display:grid;gap:3px;font-size:13px}
+label.f span{color:var(--muted)}
+input[type=number],input[type=month],select{font:14px var(--mono);padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--ground);color:var(--ink);width:100%}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{font:500 14px var(--sans);border-radius:4px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--ink)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600;font-size:15px;padding:10px 14px}
+button.primary:hover{filter:brightness(1.05)}
+.rules{font-size:12.5px;color:var(--muted);display:grid;gap:4px}
+.rules code{font-family:var(--mono);color:var(--ink)}
+.main{display:grid;gap:14px;min-width:0}
+.summary{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px}
+.chip i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.chip b{font-family:var(--mono);font-weight:500}
+.demo{background:var(--warn-bg);color:var(--ink);border:1px solid var(--warn);border-radius:6px;padding:8px 12px;font-size:13px}
+.msgs{display:grid;gap:4px;font-size:13px}
+.msgs .err{color:var(--bad)}
+.msgs .warn{color:var(--warn)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar .sp{flex:1}
+.tablebox{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+table{border-collapse:separate;border-spacing:0;font:12.5px/1 var(--mono);font-variant-numeric:tabular-nums;width:max-content;min-width:100%}
+th,td{border-bottom:1px solid var(--line);padding:0;text-align:center;height:30px}
+thead th{position:sticky;top:0;background:var(--panel);font-weight:500;color:var(--muted);font-size:11.5px;z-index:2;padding:0 2px}
+thead th.we{color:var(--accent)}
+th.name,td.name{position:sticky;left:0;background:var(--panel);text-align:left;padding:0 10px;font:500 13px var(--sans);white-space:nowrap;z-index:1;border-right:1px solid var(--line);min-width:190px}
+td.name small{display:block;font:11px var(--mono);color:var(--muted);margin-top:2px}
+td.name.nofile{color:var(--muted)}
+td.c{width:38px;min-width:38px;cursor:pointer;position:relative}
+td.c:hover{outline:2px solid var(--accent);outline-offset:-2px}
+td.c.z{color:var(--muted)}
+td.c.h{color:#fff}
+td.c.nodata{background:var(--unknown);color:var(--muted)}
+td.c.partial::after{content:"";position:absolute;right:2px;top:2px;width:6px;height:6px;border-radius:50%;background:var(--warn)}
+td.c.diff{box-shadow:inset 0 0 0 2px var(--bad)}
+td.c .m{display:block;font-size:9.5px;opacity:.85;margin-top:1px}
+td.c.off{color:var(--muted);font-family:var(--sans);font-size:10.5px;cursor:default}
+td.tot,th.tot{padding:0 10px;font-weight:500;border-left:1px solid var(--line);white-space:nowrap}
+td.tot small{display:block;font-size:10.5px;color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.sw{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
+.detail{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:grid;gap:10px}
+.detail h3{margin:0;font:600 18px var(--display);letter-spacing:.02em}
+.kv{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:13px}
+.kv b{font-family:var(--mono);font-weight:500}
+.tl{position:relative;height:34px;border-radius:4px;overflow:hidden;background:var(--unknown);border:1px solid var(--line)}
+.tl .seg{position:absolute;top:0;bottom:0}
+.tl .ng{position:absolute;top:0;bottom:0;background:var(--night);opacity:.10;pointer-events:none}
+.axis{position:relative;height:16px;font:10.5px var(--mono);color:var(--muted)}
+.axis span{position:absolute;transform:translateX(-50%)}
+.seglist{font:12px/1.6 var(--mono);color:var(--muted);max-height:180px;overflow:auto}
+.seglist .in{color:var(--ink)}
+.plan{font-size:13px;background:var(--night-soft);padding:8px 10px;border-radius:4px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--ground);padding:8px 14px;border-radius:4px;font-size:13px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<style>
+td.c.check{box-shadow:inset 0 0 0 2px var(--warn)}
+td.c.check.diff{box-shadow:inset 0 0 0 2px var(--bad)}
+td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3px}
+.strip{display:grid;grid-template-columns:repeat(26,1fr);gap:1px;border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.strip div{height:30px;position:relative}
+.strip div.x{opacity:.35}
+.strip div span{position:absolute;inset:auto 0 1px 0;text-align:center;font:9.5px var(--mono);color:var(--ink);opacity:.8}
+.k-work{background:var(--drive)} .k-gap{background:var(--work)} .k-wait{background:var(--avail)}
+.k-rest{background:#F79646} .k-off{background:var(--unknown)} .k-empty,.k-none{background:var(--rest)}
+.blocks{font:12.5px/1.6 var(--sans);display:grid;gap:2px}
+.blocks b{font-family:var(--mono);font-weight:500}
+.edit{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.edit input{width:90px}
+.src{font-size:12px;color:var(--muted)}
+</style>
+<div class="wrap">
+  <header>
+    <h1>Ночные часы <span class="band">22:00–05:59</span></h1>
+    <p>Загрузите диспетчерский план (.ods). Расчёт идёт в браузере, файлы никуда не отправляются.</p>
+  </header>
+
+  <div class="grid">
+    <aside class="side">
+      <div class="box">
+        <h2>Данные</h2>
+        <label class="drop" id="dropPlan">
+          <b>Диспетчерский план (.ods)</b>
+          <span class="hint">Google Таблица → Файл → Скачать → OpenDocument. Все недели в одном файле</span>
+          <span class="got" id="gotPlan"></span>
+          <input type="file" id="filePlan" accept=".ods">
+        </label>
+        <label class="drop" id="dropBonus">
+          <b>Таблица доплат (.xlsx или .csv)<span class="opt">по желанию</span></b>
+          <span class="hint">Задаёт порядок строк. Если часы уже внесены, покажем расхождения</span>
+          <span class="got" id="gotBonus"></span>
+          <input type="file" id="fileBonus" accept=".xlsx,.csv,.tsv,.txt">
+        </label>
+        <label class="drop" id="dropDdd">
+          <b>Тахограф (.zip или .DDD)<span class="opt">по желанию</span></b>
+          <span class="hint">Для проверки длинных рейсов: покажем, что было на карте водителя</span>
+          <span class="got" id="gotDdd"></span>
+          <input type="file" id="fileDdd" multiple accept=".zip,.ddd,.DDD">
+        </label>
+      </div>
+
+      <div class="box">
+        <h2>Месяц</h2>
+        <label class="f"><span>Месяц расчёта</span><input type="month" id="month"></label>
+        <button class="primary" id="run">Рассчитать</button>
+        <div class="rules">
+          <div><code>22:00–23:59</code> идёт в эту дату, <code>00:00–05:59</code> в следующую.</div>
+          <div>Работа: рейсы, <code>empty to load</code>, STK, trailer change, пустые ячейки между рейсами.</div>
+          <div>Не работа: REST (оранжевый), NO DRIVER, Hangar, Hospital, service, Docs, BROKEN TRUCK.</div>
+          <div>REST в серой строке машины отменяет рейс. После него отдых длится до отметки <code>s</code>.</div>
+          <div>Нажмите на ячейку, чтобы увидеть план за ночь и исправить итог (например, задержку на полчаса).</div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="main">
+      <div class="demo" id="demo">Пример на вымышленных водителях. Загрузите план .ods, и здесь появятся ваши данные.</div>
+      <div class="summary" id="summary"></div>
+      <div class="msgs" id="msgs"></div>
+      <div class="toolbar">
+        <button id="copyDays" title="Вставьте в ячейку первого дня первого водителя в Google Таблице">Копировать часы по дням</button>
+        <button id="copyAll">Копировать с именами</button>
+        <button id="dl">Скачать CSV</button>
+        <span class="sp"></span>
+        <div class="legend">
+          <span><i class="sw" style="background:var(--night)"></i>ночные часы</span>
+          <span><i class="sw" style="box-shadow:inset 0 0 0 2px var(--bad)"></i>не совпало с таблицей</span>
+          <span><i class="sw" style="background:var(--unknown)"></i>нет в плане</span>
+          <span><u><i>1,5</i></u> исправлено вручную</span>
+        </div>
+      </div>
+      <div class="tablebox"><table id="tbl"></table></div>
+      <div class="detail" id="detail" hidden></div>
+    </section>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/*CORE*/
+</script>
+<script>
+(function(){
+'use strict';
+const NH = window.NightHours;
+const $ = (id) => document.getElementById(id);
+const S = { plan: null, bonusMonths: [], bonusCsv: null, cards: [], rawCards: [], rows: [], year: 0, month: 0, days: 0, demo: true, msgs: [], edits: {} };
+
+const pad = (n) => String(n).padStart(2, '0');
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function toast(t){ const el = $('toast'); el.textContent = t; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => el.hidden = true, 2600); }
+function loadEdits(){ try { S.edits = JSON.parse(localStorage.getItem('nh.edits') || '{}'); } catch(e){ S.edits = {}; } }
+function saveEdits(){ try { localStorage.setItem('nh.edits', JSON.stringify(S.edits)); } catch(e){} }
+const editKey = (name, d) => `${NH.normName(name)}|${S.year}-${pad(S.month)}-${pad(d)}`;
+loadEdits();
+
+// ---------------------------------------------------------- загрузка
+async function readFiles(list){ return Promise.all([...list].map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) }))); }
+
+async function onPlan(list){
+  const [f] = await readFiles(list);
+  $('gotPlan').textContent = 'читаю…';
+  try {
+    const sheets = await NH.readOds(f.data);
+    S.plan = NH.planTimelines(sheets);
+    S.demo = false;
+    const weeks = sheets.filter((s) => /KW/i.test(s.name)).map((s) => s.name.replace(/\D+/g, ''));
+    $('gotPlan').textContent = `${f.name} · ${sheets.length} листов${weeks.length ? ` (KW ${weeks[0]}–${weeks[weeks.length - 1]})` : ''} · ${S.plan.size} водителей`;
+    if (!S.bonusMonths.length && !S.bonusCsv) {
+      // последний месяц, по которому в плане есть данные
+      let last = 0;
+      for (const d of S.plan.values()) for (const t of d.hours.keys()) if (t > last) last = t;
+      const today = Date.now();
+      const dt = new Date(Math.min(last, today));
+      $('month').value = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}`;
+    }
+  } catch(e){ $('gotPlan').textContent = ''; S.msgs = [['err', `${f.name}: ${e.message}`]]; }
+  run();
+}
+
+async function onBonus(list){
+  const [f] = await readFiles(list);
+  if (S.demo) { S.plan = null; S.demo = false; }
+  try {
+    if (/\.xlsx$/i.test(f.name)) {
+      S.bonusMonths = NH.bonusFromXlsx(await NH.readXlsx(f.data)); S.bonusCsv = null;
+      if (!S.bonusMonths.length) throw new Error('не найден лист с колонкой «Имя:» и датами');
+      const last = S.bonusMonths[S.bonusMonths.length - 1];
+      $('gotBonus').textContent = `${f.name} · листы: ${S.bonusMonths.map((m) => m.sheet).join(', ')}`;
+      $('month').value = `${last.year}-${pad(last.month)}`;
+    } else {
+      S.bonusCsv = NH.parseBonusTable(NH.decodeText(f.data)); S.bonusMonths = [];
+      $('gotBonus').textContent = `${f.name} · ${S.bonusCsv.rows.length} строк`;
+      const y = ($('month').value || '').slice(0, 4) || new Date().getFullYear();
+      if (S.bonusCsv.month) $('month').value = `${y}-${pad(S.bonusCsv.month)}`;
+    }
+  } catch(e){ $('gotBonus').textContent = ''; S.msgs = [['err', `${f.name}: ${e.message}`]]; }
+  run();
+}
+
+async function onDdd(list){
+  if (S.demo) { S.plan = null; S.demo = false; }
+  let files = [];
+  const msgs = [];
+  for (const f of await readFiles(list)) {
+    if (/\.zip$/i.test(f.name)) {
+      try { files.push(...(await NH.readZip(f.data)).filter((x) => /\.ddd$/i.test(x.name))); }
+      catch(e){ msgs.push(['err', `${f.name}: ${e.message}`]); }
+    } else files.push(f);
+  }
+  for (const f of files) {
+    try { S.rawCards.push({ ...NH.parseDriverCard(f.data), fileName: f.name }); }
+    catch(e){ msgs.push(['warn', `${f.name}: ${e.message}`]); }
+  }
+  S.cards = NH.mergeCards(S.rawCards);
+  $('gotDdd').textContent = `${S.rawCards.length} файлов · ${S.cards.length} водителей`;
+  S.msgs = msgs;
+  run();
+}
+
+function wireDrop(dropId, inputId, fn){
+  const d = $(dropId), i = $(inputId);
+  i.addEventListener('change', () => { if (i.files.length) fn(i.files); i.value = ''; });
+  d.addEventListener('dragover', (e) => { e.preventDefault(); d.classList.add('over'); });
+  d.addEventListener('dragleave', () => d.classList.remove('over'));
+  d.addEventListener('drop', (e) => { e.preventDefault(); d.classList.remove('over'); if (e.dataTransfer.files.length) fn(e.dataTransfer.files); });
+}
+wireDrop('dropPlan', 'filePlan', onPlan);
+wireDrop('dropBonus', 'fileBonus', onBonus);
+wireDrop('dropDdd', 'fileDdd', onDdd);
+$('run').addEventListener('click', run);
+$('month').addEventListener('change', run);
+
+// ---------------------------------------------------------- расчёт
+function bonusFor(y, m){
+  if (S.bonusMonths.length) return S.bonusMonths.find((b) => b.year === y && b.month === m) || null;
+  if (S.bonusCsv && S.bonusCsv.month === m) return S.bonusCsv;
+  return null;
+}
+const titleCase = (s) => s.toLowerCase().replace(/(^|\s|-)\p{L}/gu, (x) => x.toUpperCase());
+
+function run(){
+  const [y, m] = ($('month').value || '').split('-').map(Number);
+  if (!y || !m) return;
+  S.year = y; S.month = m; S.days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const bonus = bonusFor(y, m);
+  const cardBy = new Map(S.cards.map((c) => [NH.normName(`${c.firstName} ${c.surname}`), c]));
+  const rows = [];
+  const used = new Set();
+  const make = (name, ref, extra) => {
+    const key = NH.normName(name);
+    const drv = S.plan ? S.plan.get(key) : null;
+    const card = cardBy.get(key) || null;
+    used.add(key);
+    return {
+      name, ref, drv, card, ...extra,
+      plan: drv ? NH.planNightHours(drv, y, m) : null,
+      tacho: card ? NH.nightHours(card, y, m) : null,
+    };
+  };
+  if (bonus) for (const r of bonus.rows) rows.push(make(r.name, r, { group: r.group, no: r.no }));
+  // если таблица доплат загружена, показываем только её водителей
+  if (S.plan && !bonus) {
+    const extra = [];
+    for (const [key, drv] of S.plan) {
+      if (used.has(key)) continue;
+      const res = NH.planNightHours(drv, y, m);
+      if (res.some((r) => r.hours > 0)) extra.push(make(drv.name.replace(/\s+/g, ' '), null, { unmatched: !!bonus }));
+    }
+    extra.sort((a, b) => a.name.localeCompare(b.name));
+    rows.push(...extra);
+  }
+  if (!S.plan && !bonus) for (const c of S.cards) {
+    const key = NH.normName(`${c.firstName} ${c.surname}`);
+    if (!used.has(key)) rows.push(make(titleCase(`${c.firstName} ${c.surname}`), null, { unmatched: !!bonus }));
+  }
+  S.rows = rows;
+  render();
+}
+
+/** Итог по ячейке: ручная правка > план > тахограф. */
+function cellInfo(row, d){
+  const refRaw = row.ref ? (row.ref.values[d] || '') : '';
+  const refNum = NH.parseNum(refRaw);
+  const p = row.plan ? row.plan[d - 1] : null;
+  const tc = row.tacho ? row.tacho[d - 1] : null;
+  const ek = editKey(row.name, d);
+  const edited = Object.prototype.hasOwnProperty.call(S.edits, ek);
+  let hours = null, status = 'none', src = '';
+  if (p && p.status !== 'nodata') { hours = p.hours; status = p.status; src = 'plan'; }
+  else if (tc && tc.status !== 'nodata') { hours = tc.hours; status = tc.status === 'ok' ? 'ok' : 'check'; src = 'tacho'; }
+  else if (p || tc) status = 'nodata';
+  if (edited) { hours = S.edits[ek]; src = 'edit'; }
+  const offTxt = /^(off|уволен)$/i.test(refRaw) ? refRaw : '';
+  return { refRaw, refNum, p, tc, hours, status, src, edited, offTxt };
+}
+
+// ---------------------------------------------------------- таблица
+function render(){
+  $('demo').hidden = !S.demo;
+  const days = S.days;
+  let h = '<thead><tr><th class="name">Водитель</th>';
+  for (let d = 1; d <= days; d++){
+    const wd = new Date(Date.UTC(S.year, S.month - 1, d)).getUTCDay();
+    h += `<th class="${wd === 0 || wd === 6 ? 'we' : ''}">${pad(d)}.${pad(S.month)}</th>`;
+  }
+  h += '<th class="tot">Итого</th></tr></thead><tbody>';
+  let cCheck = 0, cDiff = 0, cEdit = 0, cUnm = 0, cNoPlan = 0, sum = 0;
+  S.rows.forEach((row, ri) => {
+    let tot = 0, refTot = 0, hasRef = false;
+    const sub = row.drv ? (row.card ? 'план + тахограф' : 'план') : row.card ? 'только тахограф' : 'нет в плане';
+    if (row.unmatched) cUnm++;
+    if (!row.drv && !row.card) cNoPlan++;
+    h += `<tr><td class="name ${row.drv || row.card ? '' : 'nofile'}">${esc(row.name)}${row.unmatched ? ' <span style="color:var(--warn)">· нет в таблице</span>' : ''}<small>${esc(sub)}</small></td>`;
+    for (let d = 1; d <= days; d++){
+      const c = cellInfo(row, d);
+      if (c.refNum != null){ refTot += c.refNum; hasRef = true; }
+      const short = (t) => /^уволен$/i.test(t) ? 'ув.' : t;
+      if (c.offTxt && !c.hours){ h += `<td class="c off" data-r="${ri}" data-d="${d}">${esc(short(c.offTxt))}</td>`; continue; }
+      if (c.hours == null){
+        h += `<td class="c ${c.status === 'nodata' ? 'nodata' : 'off'}" data-r="${ri}" data-d="${d}">${c.status === 'nodata' ? '–' : esc(short(c.refRaw))}</td>`; continue;
+      }
+      tot += c.hours;
+      const cls = ['c', c.hours ? 'h' : 'z'];
+      if (c.status === 'check' && !c.edited) cCheck++;
+      if (c.edited){ cls.push('edited'); cEdit++; }
+      const diff = c.refNum != null && c.refNum !== c.hours;
+      if (diff){ cls.push('diff'); cDiff++; }
+      const bg = c.hours ? `style="background:color-mix(in srgb, var(--night) ${Math.round(28 + 72 * Math.min(c.hours, 8) / 8)}%, var(--panel))"` : '';
+      h += `<td class="${cls.join(' ')}" ${bg} data-r="${ri}" data-d="${d}">${NH.fmtNum(c.hours)}${diff ? `<span class="m">${NH.fmtNum(c.refNum)}</span>` : ''}</td>`;
+    }
+    sum += tot;
+    h += `<td class="tot">${NH.fmtNum(tot)}${hasRef ? `<small>в таблице ${NH.fmtNum(refTot)}</small>` : ''}</td></tr>`;
+  });
+  $('tbl').innerHTML = h + '</tbody>';
+  const chips = [
+    ['var(--night)', 'Водителей', S.rows.filter((r) => r.drv || r.card).length],
+    ['var(--ink)', 'Ночных часов', NH.fmtNum(sum)],
+    ['var(--warn)', 'Длинных рейсов ночью', cCheck],
+    ['var(--muted)', 'Исправлено вручную', cEdit],
+  ];
+  if (bonusFor(S.year, S.month)) chips.push(['var(--bad)', 'Не совпало с таблицей', cDiff]);
+  if (cUnm) chips.push(['var(--warn)', 'Нет в таблице доплат', cUnm]);
+  if (cNoPlan && S.plan) chips.push(['var(--muted)', 'Нет в плане', cNoPlan]);
+  $('summary').innerHTML = chips.map(([c, l, v]) => `<span class="chip"><i style="background:${c}"></i>${l} <b>${v}</b></span>`).join('');
+  $('msgs').innerHTML = S.msgs.map(([k, t]) => `<div class="${k}">${esc(t)}</div>`).join('');
+}
+
+// ---------------------------------------------------------- подробности и правка
+$('tbl').addEventListener('click', (e) => {
+  const td = e.target.closest('td.c'); if (!td) return;
+  showDetail(+td.dataset.r, +td.dataset.d);
+});
+
+const KIND = { work: 'рейс', gap: 'между рейсами', wait: 'ожидание старта', rest: 'REST', off: 'не работа', empty: 'пусто', none: 'нет в плане' };
+function showDetail(ri, d){
+  const row = S.rows[ri];
+  const el = $('detail'); el.hidden = false;
+  const c = cellInfo(row, d);
+  const date = `${pad(d)}.${pad(S.month)}.${S.year}`;
+  let html = `<h3>${esc(row.name)} · ${date}</h3><div class="kv">`;
+  html += `<span>Итог: <b>${c.hours == null ? '—' : NH.fmtNum(c.hours) + ' ч'}</b></span>`;
+  if (c.p && c.p.hours != null) html += `<span>По плану: <b>${c.p.hours} ч</b></span>`;
+  if (c.tc && c.tc.hours != null) html += `<span>По тахографу: <b>${NH.fmtNum(c.tc.hours)} ч</b></span>`;
+  if (c.refRaw) html += `<span>В таблице доплат: <b>${esc(c.refRaw)}</b></span>`;
+  html += '</div>';
+  if (c.p && c.p.notes.length) html += `<div class="plan">${c.p.notes.map(esc).join('; ')}. Если водитель ночью стоял, а в строке машины нет REST, исправьте итог.</div>`;
+  if (row.drv){
+    const hrs = NH.planDay(row.drv, S.year, S.month, d);
+    html += '<div class="strip">' + hrs.map((x, i) => {
+      const night = i >= 2 && (x.hour < 6 || x.hour >= 22) ? '' : ' x';
+      return `<div class="k-${x.kind}${night}" title="${pad(x.hour)}:00 · ${esc(KIND[x.kind])}${x.why ? ' · ' + esc(x.why) : ''}${x.text ? ' · ' + esc(x.text.split('\n')[0]) : ''}${x.truck ? ' · машина: ' + esc(x.truck) : ''}">${i % 2 === 0 ? `<span>${pad(x.hour)}</span>` : ''}</div>`;
+    }).join('') + '</div>';
+    html += `<div class="legend"><span><i class="sw k-work"></i>рейс</span><span><i class="sw k-gap"></i>пусто между рейсами</span><span><i class="sw k-wait"></i>отдых до «s»</span><span><i class="sw k-rest"></i>REST</span><span><i class="sw k-off"></i>не работа</span><span>Ярко — часы, которые идут в эту дату (00–06 и 22–24)</span></div>`;
+    const seen = new Set(); const lines = [];
+    for (const x of hrs){
+      const key = x.text + '|' + x.truck;
+      if ((x.text || x.truck) && !seen.has(key)){ seen.add(key); lines.push(`<div><b>${pad(x.hour)}:00</b> ${esc(KIND[x.kind])}${x.text ? ' · ' + esc(x.text.split('\n')[0]) : ''}${x.truck ? ' · <span class="src">машина: ' + esc(x.truck) + '</span>' : ''}${x.why ? ' · <span class="src">' + esc(x.why) + '</span>' : ''}</div>`); }
+    }
+    html += `<div class="blocks">${lines.join('') || '<div class="src">записей нет</div>'}</div>`;
+  } else html += `<div class="plan">Водителя нет в диспетчерском плане${S.plan ? '' : ' (план не загружен)'}.</div>`;
+  const ek = editKey(row.name, d);
+  html += `<div class="edit"><label class="f" style="grid-auto-flow:column;align-items:center;gap:8px"><span>Исправить итог</span><input type="number" id="editVal" min="0" max="8" step="0.5" value="${c.hours ?? ''}"></label>
+    <button id="editSave">Сохранить</button>${c.edited ? '<button id="editReset">Вернуть расчёт</button>' : ''}
+    ${c.tc && c.tc.hours != null ? `<button id="editTacho">Взять с тахографа (${NH.fmtNum(c.tc.hours)})</button>` : ''}</div>`;
+  el.innerHTML = html;
+  const save = (v) => { if (v === null) delete S.edits[ek]; else S.edits[ek] = v; saveEdits(); render(); showDetail(ri, d); toast(v === null ? 'Вернули расчёт' : 'Сохранено'); };
+  $('editSave').onclick = () => { const v = NH.parseNum($('editVal').value); if (v == null || v < 0 || v > 8) { toast('Введите число от 0 до 8'); return; } save(Math.round(v * 2) / 2); };
+  if ($('editReset')) $('editReset').onclick = () => save(null);
+  if ($('editTacho')) $('editTacho').onclick = () => save(c.tc.hours);
+  el.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'nearest' });
+}
+
+// ---------------------------------------------------------- экспорт
+function matrix(withNames){
+  return S.rows.map((row) => {
+    const vals = [];
+    for (let d = 1; d <= S.days; d++){
+      const c = cellInfo(row, d);
+      if (c.offTxt && !c.hours) vals.push(c.offTxt);
+      else if (c.hours == null) vals.push(c.refRaw);
+      else vals.push(NH.fmtNum(c.hours));
+    }
+    return withNames ? [row.name, ...vals] : vals;
+  });
+}
+async function copy(text, msg){
+  try { await navigator.clipboard.writeText(text); toast(msg); }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast(msg); } catch(_) { toast('Не удалось скопировать: выделите текст вручную'); }
+    ta.remove();
+  }
+}
+const head = () => ['Имя', ...Array.from({ length: S.days }, (_, i) => `${pad(i + 1)}.${pad(S.month)}`)];
+$('copyDays').addEventListener('click', () => copy(matrix(false).map((r) => r.join('\t')).join('\n'), 'Скопировано. Встаньте на ячейку первого дня первого водителя и вставьте'));
+$('copyAll').addEventListener('click', () => copy([head(), ...matrix(true)].map((r) => r.join('\t')).join('\n'), 'Таблица скопирована'));
+// Во встроенном просмотре скачивание запрещено — там остаётся копирование.
+try { if (window.self !== window.top) $('dl').hidden = true; } catch(e){ $('dl').hidden = true; }
+$('dl').addEventListener('click', () => {
+  const csv = [head(), ...matrix(true)].map((r) => r.map((v) => /[;"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v).join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
+  a.download = `night-hours-${S.year}-${pad(S.month)}.csv`;
+  a.click();
+});
+
+// ---------------------------------------------------------- пример
+function demoPlan(){
+  // вымышленные водители: смены, ночные рейсы, длинный рейс, REST в строке машины
+  const plan = new Map();
+  const names = ['Ivan Petrenko', 'Oleh Kovalenko', 'Andrii Melnyk', 'Serhii Bondar', 'Petro Shevchuk'];
+  names.forEach((name, n) => {
+    const hours = new Map();
+    let seed = 7 + n * 13; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const start = Date.UTC(2026, 8, 1);
+    let t = start;
+    const put = (len, kind, text, truck) => {
+      const block = { start: t, hours: len, text, bg: null };
+      for (let i = 0; i < len; i++) hours.set(t + i * 3600000, { kind, block, truck: truck && i === 0 ? { mark: truck, text: truck === 'start' ? 's' : 'REST' } : truck === 'rest' ? { mark: 'rest', text: 'REST' } : null });
+      t += len * 3600000;
+    };
+    const routes = ['Город А – Город Б', 'Город Б – Город В', 'Город В – Город А', 'Город А – Город Г', 'Город Г – Город Б', 'Город Д – Город А'];
+    while (t < start + 31 * 86400000){
+      const r = rnd();
+      if (r < 0.4) put(5 + Math.floor(rnd() * 6), 'work', routes[Math.floor(rnd() * routes.length)]);
+      else if (r < 0.46) put(20 + Math.floor(rnd() * 8), 'work', routes[5]);
+      else put(10 + Math.floor(rnd() * 14), 'rest', 'REST');
+    }
+    plan.set(NH.normName(name), { name, hours });
+  });
+  return plan;
+}
+S.plan = demoPlan();
+$('month').value = '2026-09';
+run();
+})();
+</script>

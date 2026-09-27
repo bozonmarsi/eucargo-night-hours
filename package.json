@@ -1,0 +1,12 @@
+{
+  "name": "eucargo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Расчёт ночных часов водителей по диспетчерскому плану и файлам тахографа",
+  "scripts": {
+    "build": "node tools/build.js",
+    "test": "node --test test/*.test.js",
+    "compare": "node tools/compare.js"
+  },
+  "engines": { "node": ">=18" }
+}
