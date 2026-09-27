@@ -538,7 +538,11 @@
     const files = await readZip(buf);
     const content = files.find((f) => f.name === 'content.xml');
     if (!content) throw new Error('Это не файл .ods (нет content.xml)');
-    const xml = utf8(content.data);
+    return parseOdsXml(utf8(content.data));
+  }
+
+  /** Разбор content.xml из .ods (без распаковки — её делает вызывающий). */
+  function parseOdsXml(xml) {
     const bg = {};
     const sheets = [];
     let styleName = null, sheet = null, row = null, rowRep = 1, cell = null, colDefaults = [];
@@ -562,6 +566,8 @@
             const st = a['table:style-name'] || colDefaults[col];
             cell = { t: '', bg: bg[st] || null, span: +(a['table:number-columns-spanned'] || 1), cov: name === 'table:covered-table-cell',
               rep: Math.min(+(a['table:number-columns-repeated'] || 1), Math.max(0, MAXC - col)) };
+            const dv = /^(\d{4})-(\d{2})-(\d{2})/.exec(a['office:date-value'] || '');
+            if (dv) cell.d = Date.UTC(+dv[1], +dv[2] - 1, +dv[3]);
             break;
           }
           case 'office:annotation': inAnn++; break;
@@ -922,7 +928,7 @@
     DEFAULTS, ACT, readZip, parseDriverCard, mergeCards, nightHours, nightTimeline,
     roundHours, normName, parseCsv, decodeText, parseDispatchPlan, planHint, czMonth,
     parseBonusTable, parseNum, fmtNum, localToUtc, segments, blocks, applyPauseRule,
-    readOds, readXlsx, bonusFromXlsx, headerDate, planTimelines, planDriverFor, resolvePlan, planNightHours, planNightExplain, planDay, PLAN_RULES,
+    readOds, parseOdsXml, readXlsx, bonusFromXlsx, headerDate, planTimelines, planDriverFor, resolvePlan, planNightHours, planNightExplain, planDay, PLAN_RULES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightHours = api;
@@ -1018,21 +1024,43 @@ function nhLoadPlan_(fromTs, toTs) {
   const src = nhPlanSourceSetting_();
   if (!src) throw new Error('Не указан диспетчерский план (меню «Ночные часы → Указать ссылку на диспетчерский план»).');
   const file = nhPlanFile_(src);
-  let sheetId = file.id, tmp = null;
-  if (file.kind !== 'gsheet') {
-    nhProgress_(`1/3 Делаю временную копию «${file.name}»…`);
-    const blob = DriveApp.getFileById(file.id).getBlob();
-    tmp = Drive.Files.create({ name: 'Ночные часы — временная копия плана', mimeType: 'application/vnd.google-apps.spreadsheet' }, blob);
-    sheetId = tmp.id;
-  }
-  try {
+  let sheets;
+  if (file.kind === 'ods') {
+    // .ods читаем сами: распаковываем и разбираем content.xml — без конвертации Google
+    nhProgress_(`1/3 Открываю «${file.name}»…`);
+    const blob = DriveApp.getFileById(file.id).getBlob().setContentType('application/zip');
+    const content = Utilities.unzip(blob).find((b) => b.getName() === 'content.xml');
+    if (!content) throw new Error(`«${file.name}» не похож на файл .ods`);
     nhProgress_('2/3 Читаю недели плана…');
-    const drivers = NightHours.planTimelines(nhReadPlan_(sheetId, fromTs, toTs));
-    const ageDays = (Date.now() - file.updated.getTime()) / 86400000;
-    return { drivers, file, stale: ageDays > 8 };
-  } finally {
-    if (tmp) { try { Drive.Files.remove(tmp.id); } catch (e) { /* временная копия удалится при следующем запуске вручную */ } }
+    sheets = NightHours.parseOdsXml(content.getDataAsString('UTF-8')).filter((sh) => {
+      const hdr = sh.rows[0] || [];
+      const d = hdr.map((c) => (c && (c.d != null ? c.d : NightHours.headerDate(c.t)))).find((x) => x != null);
+      return d != null && d <= toTs && d + 7 * 86400000 >= fromTs;
+    });
+    if (!sheets.length) throw new Error(`В «${file.name}» нет недель за этот месяц (проверьте даты в первой строке листов).`);
+  } else if (file.kind === 'gsheet') {
+    nhProgress_('2/3 Читаю недели плана…');
+    sheets = nhReadPlan_(file.id, fromTs, toTs);
+  } else {
+    // .xlsx — через временную Google-копию (Google иногда не может сконвертировать большой файл)
+    nhProgress_(`1/3 Делаю временную копию «${file.name}»…`);
+    let tmp;
+    try {
+      const blob = DriveApp.getFileById(file.id).getBlob();
+      tmp = Drive.Files.create({ name: 'Ночные часы — временная копия плана', mimeType: 'application/vnd.google-apps.spreadsheet' }, blob);
+    } catch (e) {
+      throw new Error(`Google не смог открыть «${file.name}» (${e.message}). Сохраните план в формате .ods (Excel: Файл → Сохранить как → Скачать как ODS) и положите в папку.`);
+    }
+    try {
+      nhProgress_('2/3 Читаю недели плана…');
+      sheets = nhReadPlan_(tmp.id, fromTs, toTs);
+    } finally {
+      try { Drive.Files.remove(tmp.id); } catch (e) { /* удалить вручную */ }
+    }
   }
+  const drivers = NightHours.planTimelines(sheets);
+  const ageDays = (Date.now() - file.updated.getTime()) / 86400000;
+  return { drivers, file, stale: ageDays > 8 };
 }
 
 /** Основной лист месяца для активного листа (активный может быть черновиком). */

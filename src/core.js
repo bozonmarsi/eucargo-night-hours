@@ -537,7 +537,11 @@
     const files = await readZip(buf);
     const content = files.find((f) => f.name === 'content.xml');
     if (!content) throw new Error('Это не файл .ods (нет content.xml)');
-    const xml = utf8(content.data);
+    return parseOdsXml(utf8(content.data));
+  }
+
+  /** Разбор content.xml из .ods (без распаковки — её делает вызывающий). */
+  function parseOdsXml(xml) {
     const bg = {};
     const sheets = [];
     let styleName = null, sheet = null, row = null, rowRep = 1, cell = null, colDefaults = [];
@@ -561,6 +565,8 @@
             const st = a['table:style-name'] || colDefaults[col];
             cell = { t: '', bg: bg[st] || null, span: +(a['table:number-columns-spanned'] || 1), cov: name === 'table:covered-table-cell',
               rep: Math.min(+(a['table:number-columns-repeated'] || 1), Math.max(0, MAXC - col)) };
+            const dv = /^(\d{4})-(\d{2})-(\d{2})/.exec(a['office:date-value'] || '');
+            if (dv) cell.d = Date.UTC(+dv[1], +dv[2] - 1, +dv[3]);
             break;
           }
           case 'office:annotation': inAnn++; break;
@@ -921,7 +927,7 @@
     DEFAULTS, ACT, readZip, parseDriverCard, mergeCards, nightHours, nightTimeline,
     roundHours, normName, parseCsv, decodeText, parseDispatchPlan, planHint, czMonth,
     parseBonusTable, parseNum, fmtNum, localToUtc, segments, blocks, applyPauseRule,
-    readOds, readXlsx, bonusFromXlsx, headerDate, planTimelines, planDriverFor, resolvePlan, planNightHours, planNightExplain, planDay, PLAN_RULES,
+    readOds, parseOdsXml, readXlsx, bonusFromXlsx, headerDate, planTimelines, planDriverFor, resolvePlan, planNightHours, planNightExplain, planDay, PLAN_RULES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightHours = api;
