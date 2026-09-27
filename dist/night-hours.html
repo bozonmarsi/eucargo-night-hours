@@ -594,7 +594,7 @@ td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3p
    * Дата из заголовка дня недели в плане: «pondělí, září 21, 2026», «понедельник, сентябрь 21, 2026»,
    * «21. září 2026», «21.09.2026», «2026-09-21», «9/21/2026». Возвращает Date.UTC или null.
    */
-  function headerDate(text) {
+  function headerDate(text, refNow) {
     const t = String(text || '').trim();
     if (!t) return null;
     let m;
@@ -603,6 +603,14 @@ td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3p
     if ((m = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/.exec(t))) return Date.UTC(+m[1], +m[2] - 1, +m[3]);
     if ((m = /\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/.exec(t))) return Date.UTC(+m[3], +m[2] - 1, +m[1]);
     if ((m = /\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/.exec(t))) return Date.UTC(+m[3], +m[1] - 1, +m[2]);
+    // «21.09» без года: год текущий (или из refYear); декабрь в январе — прошлый год
+    if ((m = /^(?:[^\d]*\s)?(\d{1,2})\.(\d{1,2})\.?$/.exec(t)) && +m[2] >= 1 && +m[2] <= 12 && +m[1] >= 1 && +m[1] <= 31) {
+      const now = new Date(refNow || Date.now());
+      let y = now.getUTCFullYear();
+      if (+m[2] - (now.getUTCMonth() + 1) > 6) y--;
+      else if ((now.getUTCMonth() + 1) - +m[2] > 6) y++;
+      return Date.UTC(y, +m[2] - 1, +m[1]);
+    }
     return null;
   }
 
