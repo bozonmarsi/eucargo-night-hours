@@ -8,11 +8,12 @@
 
 /* global SpreadsheetApp, PropertiesService, Session, Utilities, ScriptApp, LockService, MailApp, NightHours */
 
+const NH_DRAFT = ' — черновик';
+
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Ночные часы')
-    .addItem('Заполнить этот лист сейчас', 'nhFillNow')
-    .addItem('Пересчитать лист (заменить все числа)', 'nhFillAll')
-    .addItem('Утвердить этот лист (больше не менять)', 'nhApprove')
+    .addItem('Обновить черновик этого месяца сейчас', 'nhFillNow')
+    .addItem('Перенести черновик в основную таблицу', 'nhTransfer')
     .addSeparator()
     .addItem('Включить еженедельный расчёт', 'nhEnableWeekly')
     .addItem('Выключить еженедельный расчёт', 'nhDisableWeekly')
@@ -31,32 +32,87 @@ function nhSetPlan() {
   ui.alert('Сохранено. Теперь можно заполнить лист или включить еженедельный расчёт.');
 }
 
-/** Заполнить активный лист: пустые ячейки и ранее заполненные скриптом (ручные правки не трогаются). */
+/** Основной лист месяца для активного листа (активный может быть черновиком). */
+function nhMainOf_(sheet) {
+  const name = sheet.getName();
+  if (!name.endsWith(NH_DRAFT)) return sheet;
+  const main = sheet.getParent().getSheetByName(name.slice(0, -NH_DRAFT.length));
+  if (!main) throw new Error('Не найден основной лист «' + name.slice(0, -NH_DRAFT.length) + '».');
+  return main;
+}
+
+/** Черновик месяца: копия основного листа рядом с ним. Создаётся при первом расчёте. */
+function nhDraftOf_(main) {
+  const ss = main.getParent();
+  const name = main.getName() + NH_DRAFT;
+  let draft = ss.getSheetByName(name);
+  if (draft) return draft;
+  draft = main.copyTo(ss).setName(name);
+  ss.setActiveSheet(draft);
+  ss.moveActiveSheet(main.getIndex() + 1);
+  // в черновике дни с числами очищаем — их заполнит расчёт; off, уволен остаются
+  const L = nhBonusLayout_(draft);
+  const c0 = Math.min(...L.days.map((d) => d.col)), c1 = Math.max(...L.days.map((d) => d.col));
+  const n = draft.getLastRow() - 1;
+  if (n > 0) {
+    const rng = draft.getRange(2, c0 + 1, n, c1 - c0 + 1);
+    rng.setValues(rng.getValues().map((row) => row.map((v) => (typeof v === 'number' ? '' : v))));
+  }
+  draft.setTabColor('#9aa6b2');
+  return draft;
+}
+
 function nhFillNow() {
   const ui = SpreadsheetApp.getUi();
-  const st = nhFillSheet_(SpreadsheetApp.getActiveSheet(), { mode: 'auto', until: nhToday_() });
-  ui.alert('Ночные часы', nhReport_(st), ui.ButtonSet.OK);
+  const main = nhMainOf_(SpreadsheetApp.getActiveSheet());
+  nhBonusLayout_(main);
+  const draft = nhDraftOf_(main);
+  const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_() });
+  SpreadsheetApp.getActive().setActiveSheet(draft);
+  ui.alert('Ночные часы', `«${draft.getName()}»: ` + nhReport_(st), ui.ButtonSet.OK);
 }
 
-function nhFillAll() {
+/** Перенос проверенного черновика в основной лист: дни по именам водителей. */
+function nhTransfer() {
   const ui = SpreadsheetApp.getUi();
-  const r = ui.alert('Пересчитать лист?', 'Все числа в днях будут заменены расчётом по плану, в том числе исправленные вручную. Текст (off, уволен) останется.', ui.ButtonSet.OK_CANCEL);
+  const main = nhMainOf_(SpreadsheetApp.getActiveSheet());
+  const draft = main.getParent().getSheetByName(main.getName() + NH_DRAFT);
+  if (!draft) { ui.alert('Черновика для «' + main.getName() + '» ещё нет.'); return; }
+  const r = ui.alert('Перенести «' + draft.getName() + '» в «' + main.getName() + '»?',
+    'Часы по дням из черновика заменят числа в основном листе. Текст (off, уволен) в основном листе останется. Скрипт больше не будет менять этот месяц.', ui.ButtonSet.OK_CANCEL);
   if (r !== ui.Button.OK) return;
-  const st = nhFillSheet_(SpreadsheetApp.getActiveSheet(), { mode: 'all', until: nhToday_() });
-  ui.alert('Ночные часы', nhReport_(st), ui.ButtonSet.OK);
-}
-
-/** Утвердить лист: еженедельный расчёт его больше не меняет. */
-function nhApprove() {
-  const ui = SpreadsheetApp.getUi();
-  const sheet = SpreadsheetApp.getActiveSheet();
-  nhBonusLayout_(sheet); // проверка, что это лист месяца
-  const r = ui.alert('Утвердить «' + sheet.getName() + '»?', 'После утверждения скрипт больше не будет менять этот лист автоматически.', ui.ButtonSet.OK_CANCEL);
-  if (r !== ui.Button.OK) return;
+  const n = nhCopyDays_(draft, main);
   const props = PropertiesService.getDocumentProperties();
-  props.setProperty('APPROVED_' + sheet.getSheetId(), new Date().toISOString());
-  props.deleteProperty('AUTO_' + sheet.getSheetId());
-  ui.alert('Лист утверждён.');
+  props.setProperty('APPROVED_' + main.getSheetId(), new Date().toISOString());
+  ui.alert('Перенесено ячеек: ' + n + '. Месяц закрыт для автоматического расчёта.');
+}
+
+function nhCopyDays_(from, to) {
+  const A = nhBonusLayout_(from), B = nhBonusLayout_(to);
+  const rows = (sh, L) => {
+    const n = sh.getLastRow() - 1;
+    const names = sh.getRange(2, L.nameCol + 1, n, 1).getDisplayValues().map((x) => NightHours.normName(x[0]));
+    const c0 = Math.min(...L.days.map((d) => d.col)), c1 = Math.max(...L.days.map((d) => d.col));
+    const rng = sh.getRange(2, c0 + 1, n, c1 - c0 + 1);
+    return { names, c0, rng, vals: rng.getValues() };
+  };
+  const src = rows(from, A), dst = rows(to, B);
+  const srcRow = new Map(src.names.map((k, i) => [k, i]));
+  let count = 0;
+  dst.names.forEach((k, i) => {
+    if (!k || !srcRow.has(k)) return;
+    const si = srcRow.get(k);
+    for (const d of B.days) {
+      const sd = A.days.find((x) => x.day === d.day);
+      if (!sd) continue;
+      const v = src.vals[si][sd.col - src.c0], cur = dst.vals[i][d.col - dst.c0];
+      if (typeof cur === 'string' && cur.trim()) continue;       // off, уволен
+      if (typeof v !== 'number') continue;
+      if (cur !== v) { dst.vals[i][d.col - dst.c0] = v; count++; }
+    }
+  });
+  dst.rng.setValues(dst.vals);
+  return count;
 }
 
 // ---------------------------------------------------------------- расписание
@@ -79,17 +135,21 @@ function nhWeekly() {
     const ss = SpreadsheetApp.getActive();
     const props = PropertiesService.getDocumentProperties();
     const now = new Date();
-    const want = [[now.getFullYear(), now.getMonth() + 1], now.getMonth() === 0 ? [now.getFullYear() - 1, 12] : [now.getFullYear(), now.getMonth()]];
+    // текущий месяц; прошлый — только в первую неделю нового месяца (дописать последние дни)
+    const want = [[now.getFullYear(), now.getMonth() + 1]];
+    if (now.getDate() <= 7) want.push(now.getMonth() === 0 ? [now.getFullYear() - 1, 12] : [now.getFullYear(), now.getMonth()]);
     const lines = [];
     for (const sheet of ss.getSheets()) {
+      if (sheet.getName().endsWith(NH_DRAFT)) continue;
       let L;
       try { L = nhBonusLayout_(sheet); } catch (e) { continue; }
       if (!want.some(([y, m]) => y === L.year && m === L.month)) continue;
-      if (props.getProperty('APPROVED_' + sheet.getSheetId())) { lines.push(sheet.getName() + ': утверждён, не менялся.'); continue; }
-      const st = nhFillSheet_(sheet, { mode: 'auto', until: nhToday_() });
-      lines.push(sheet.getName() + ': ' + nhReport_(st));
+      if (props.getProperty('APPROVED_' + sheet.getSheetId())) { lines.push(sheet.getName() + ': перенесён в основную таблицу, не менялся.'); continue; }
+      const draft = nhDraftOf_(sheet);
+      const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_() });
+      lines.push(draft.getName() + ': ' + nhReport_(st));
     }
-    if (!lines.length) lines.push('Не найден лист текущего месяца (строка «Имя:» с датами).');
+    if (!lines.length) lines.push('Не найден лист текущего месяца (строка «Имя:» с датами). Создайте лист месяца, как обычно.');
     const email = Session.getEffectiveUser().getEmail();
     if (email) MailApp.sendEmail(email, 'Ночные часы: еженедельный расчёт', lines.join('\n\n') + '\n\nТаблица: ' + ss.getUrl());
   } finally { lock.releaseLock(); }
@@ -188,7 +248,7 @@ function nhFillSheet_(sheet, opt) {
   names.forEach((name, r) => {
     if (!name.trim()) return;
     const drv = drivers.get(NightHours.normName(name));
-    if (!drv) { if (values[r].some((v) => v === '')) st.missing.push(name.trim()); return; }
+    if (!drv) { if (!values[r].some((v) => typeof v === 'string' && v.trim())) st.missing.push(name.trim()); return; }
     const key = NightHours.normName(name);
     const res = NightHours.planNightHours(drv, L.year, L.month);
     for (const d of L.days) {
