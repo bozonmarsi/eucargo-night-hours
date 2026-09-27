@@ -22,8 +22,8 @@ function onOpen() {
     .addItem('Обновить черновик этого месяца сейчас', 'nhFillNow')
     .addItem('Перенести черновик в основную таблицу', 'nhTransfer')
     .addSeparator()
-    .addItem('Включить еженедельный расчёт', 'nhEnableWeekly')
-    .addItem('Выключить еженедельный расчёт', 'nhDisableWeekly')
+    .addItem('Включить автоматический расчёт', 'nhEnableWeekly')
+    .addItem('Выключить автоматический расчёт', 'nhDisableWeekly')
     .addItem('Указать ссылку на диспетчерский план', 'nhSetPlan')
     .addToUi();
 }
@@ -213,23 +213,48 @@ function nhCopyDays_(from, to) {
 }
 
 // ---------------------------------------------------------------- расписание
+// Два задания Google (работают на серверах Google, компьютер может быть выключен):
+//  • nhHourly — каждый час смотрит папку; появился новый файл плана → сразу пересчёт и письмо;
+//  • nhWeekly — понедельник ~6:00: досчитать прошедшие дни, создать лист нового месяца, напомнить про старый план.
 function nhEnableWeekly() {
   nhDisableWeekly_(true);
+  ScriptApp.newTrigger('nhHourly').timeBased().everyHours(1).create();
   ScriptApp.newTrigger('nhWeekly').timeBased().everyWeeks(1).onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(6).create();
-  SpreadsheetApp.getUi().alert('Готово: расчёт будет запускаться каждый понедельник около 6:00 и присылать отчёт на почту.');
+  // текущий файл считаем уже обработанным, чтобы не пересчитывать сразу
+  try { const f = nhPlanFile_(nhPlanSourceSetting_()); PropertiesService.getDocumentProperties().setProperty('LAST_PLAN', nhPlanStamp_(f)); } catch (e) { /* папка пустая */ }
+  SpreadsheetApp.getUi().alert('Автоматика включена:\n• каждый час скрипт проверяет папку — новый файл плана считается сразу (в течение часа);\n• каждый понедельник около 6:00 — плановый пересчёт.\nОтчёт приходит на почту.');
 }
 function nhDisableWeekly() { nhDisableWeekly_(false); }
 function nhDisableWeekly_(silent) {
-  for (const t of ScriptApp.getProjectTriggers()) if (t.getHandlerFunction() === 'nhWeekly') ScriptApp.deleteTrigger(t);
-  if (!silent) SpreadsheetApp.getUi().alert('Еженедельный расчёт выключен.');
+  for (const t of ScriptApp.getProjectTriggers()) {
+    if (['nhWeekly', 'nhHourly'].includes(t.getHandlerFunction())) ScriptApp.deleteTrigger(t);
+  }
+  if (!silent) SpreadsheetApp.getUi().alert('Автоматический расчёт выключен.');
 }
 
-/** Запуск по расписанию: текущий и прошлый месяц, если они не утверждены. */
-function nhWeekly() {
+function nhPlanStamp_(f) { return f.id + '|' + f.updated.getTime(); }
+
+/** Каждый час: если в папке новый файл плана — пересчитать. */
+function nhHourly() {
+  const props = PropertiesService.getDocumentProperties();
+  const src = nhPlanSourceSetting_();
+  if (!src) return;
+  let f;
+  try { f = nhPlanFile_(src); } catch (e) { return; }                 // папка пустая — ждём
+  if (props.getProperty('LAST_PLAN') === nhPlanStamp_(f)) return;        // ничего нового
+  nhRunAll_('новый файл плана «' + f.name + '»');
+}
+
+/** Понедельник: плановый пересчёт. */
+function nhWeekly() { nhRunAll_('еженедельный пересчёт'); }
+
+/** Пересчёт текущего месяца (и прошлого — в первую неделю нового) + письмо. */
+function nhRunAll_(reason) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(60000)) return;
+  const ss = SpreadsheetApp.getActive();
+  const email = Session.getEffectiveUser().getEmail();
   try {
-    const ss = SpreadsheetApp.getActive();
     const props = PropertiesService.getDocumentProperties();
     const now = new Date();
     // текущий месяц; прошлый — только в первую неделю нового месяца (дописать последние дни)
@@ -237,6 +262,7 @@ function nhWeekly() {
     if (now.getDate() <= 7) want.push(now.getMonth() === 0 ? [now.getFullYear() - 1, 12] : [now.getFullYear(), now.getMonth()]);
     const lines = [];
     const flagged = [];
+    let planFile = null;
     const created = nhEnsureMonthSheet_(ss, now.getFullYear(), now.getMonth() + 1);
     if (created) lines.push(`Создан лист «${created.getName()}» по образцу прошлого месяца. Проверьте служебные колонки (доплата, уборка ангара и т.п.).`);
     for (const sheet of ss.getSheets()) {
@@ -245,18 +271,23 @@ function nhWeekly() {
       try { L = nhBonusLayout_(sheet); } catch (e) { continue; }
       if (!want.some(([y, m]) => y === L.year && m === L.month)) continue;
       if (props.getProperty('APPROVED_' + sheet.getSheetId())) { lines.push(sheet.getName() + ': перенесён в основную таблицу, не менялся.'); continue; }
+      const plan = nhLoadPlan_(Date.UTC(L.year, L.month - 1, 1) - 8 * 86400000, Date.UTC(L.year, L.month, 1) + 2 * 86400000);
+      planFile = plan.file;
       const draft = nhDraftOf_(sheet);
-      const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main: sheet });
+      const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main: sheet, plan });
       flagged.push(...st.flagged);
       lines.push(draft.getName() + ': ' + nhReport_(st));
     }
+    if (planFile) props.setProperty('LAST_PLAN', nhPlanStamp_(planFile));
+    if (!lines.length) lines.push('Не найден лист текущего месяца (строка «Имя:» с датами). Создайте лист месяца, как обычно.');
     if (flagged.length) {
       lines.push('Проверьте (в черновике подсвечены):\n' + flagged.slice(0, 60).map((f) => '• ' + f).join('\n') +
         (flagged.length > 60 ? `\n… и ещё ${flagged.length - 60}` : ''));
-    } else lines.push('Спорных ячеек за неделю нет.');
-    if (!lines.length) lines.push('Не найден лист текущего месяца (строка «Имя:» с датами). Создайте лист месяца, как обычно.');
-    const email = Session.getEffectiveUser().getEmail();
-    if (email) MailApp.sendEmail(email, 'Ночные часы: еженедельный расчёт', lines.join('\n\n') + '\n\nТаблица: ' + ss.getUrl());
+    } else lines.push('Новых спорных ячеек нет.');
+    if (email) MailApp.sendEmail(email, 'Ночные часы: ' + reason, lines.join('\n\n') + '\n\nТаблица: ' + ss.getUrl());
+  } catch (e) {
+    if (email) MailApp.sendEmail(email, 'Ночные часы: ошибка', `Причина запуска: ${reason}\n\nОшибка: ${e.message}\n\nТаблица: ${ss.getUrl()}`);
+    throw e;
   } finally { lock.releaseLock(); }
 }
 
