@@ -7,8 +7,15 @@
  */
 
 /* global SpreadsheetApp, PropertiesService, Session, Utilities, ScriptApp, LockService, MailApp, NightHours */
+/*
+ * В черновике: наведите на ячейку — пояснение, откуда цифра.
+ * Жёлтая ячейка — ночь глубоко внутри длинного рейса без REST (проверить), оранжевая — план изменили задним числом.
+ */
 
 const NH_DRAFT = ' — черновик';
+const NH_YELLOW = '#fff2cc';   // ночь глубоко внутри длинного рейса без REST — проверить
+const NH_ORANGE = '#f9cb9c';   // план поменяли задним числом, цифра изменилась
+const NH_MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Ночные часы')
@@ -67,7 +74,7 @@ function nhFillNow() {
   const main = nhMainOf_(SpreadsheetApp.getActiveSheet());
   nhBonusLayout_(main);
   const draft = nhDraftOf_(main);
-  const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_() });
+  const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main });
   SpreadsheetApp.getActive().setActiveSheet(draft);
   ui.alert('Ночные часы', `«${draft.getName()}»: ` + nhReport_(st), ui.ButtonSet.OK);
 }
@@ -139,6 +146,9 @@ function nhWeekly() {
     const want = [[now.getFullYear(), now.getMonth() + 1]];
     if (now.getDate() <= 7) want.push(now.getMonth() === 0 ? [now.getFullYear() - 1, 12] : [now.getFullYear(), now.getMonth()]);
     const lines = [];
+    const flagged = [];
+    const created = nhEnsureMonthSheet_(ss, now.getFullYear(), now.getMonth() + 1);
+    if (created) lines.push(`Создан лист «${created.getName()}» по образцу прошлого месяца. Проверьте служебные колонки (доплата, уборка ангара и т.п.).`);
     for (const sheet of ss.getSheets()) {
       if (sheet.getName().endsWith(NH_DRAFT)) continue;
       let L;
@@ -146,19 +156,74 @@ function nhWeekly() {
       if (!want.some(([y, m]) => y === L.year && m === L.month)) continue;
       if (props.getProperty('APPROVED_' + sheet.getSheetId())) { lines.push(sheet.getName() + ': перенесён в основную таблицу, не менялся.'); continue; }
       const draft = nhDraftOf_(sheet);
-      const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_() });
+      const st = nhFillSheet_(draft, { mode: 'auto', until: nhToday_(), main: sheet });
+      flagged.push(...st.flagged);
       lines.push(draft.getName() + ': ' + nhReport_(st));
     }
+    if (flagged.length) {
+      lines.push('Проверьте (в черновике подсвечены):\n' + flagged.slice(0, 60).map((f) => '• ' + f).join('\n') +
+        (flagged.length > 60 ? `\n… и ещё ${flagged.length - 60}` : ''));
+    } else lines.push('Спорных ячеек за неделю нет.');
     if (!lines.length) lines.push('Не найден лист текущего месяца (строка «Имя:» с датами). Создайте лист месяца, как обычно.');
     const email = Session.getEffectiveUser().getEmail();
     if (email) MailApp.sendEmail(email, 'Ночные часы: еженедельный расчёт', lines.join('\n\n') + '\n\nТаблица: ' + ss.getUrl());
   } finally { lock.releaseLock(); }
 }
 
+/**
+ * Лист месяца, если его ещё нет: копия последнего листа, где хватает колонок-дней.
+ * Даты — новые, часы очищены («уволен» на весь месяц переносится), разовые значения
+ * справа от дней очищены, формулы (Итого, Доплата) сохраняются.
+ */
+function nhEnsureMonthSheet_(ss, year, month) {
+  const need = new Date(year, month, 0).getDate();
+  const sheets = [];
+  for (const sh of ss.getSheets()) {
+    if (sh.getName().endsWith(NH_DRAFT)) continue;
+    let L;
+    try { L = nhBonusLayout_(sh); } catch (e) { continue; }
+    if (L.year === year && L.month === month) return null;     // уже есть
+    sheets.push({ sh, L, n: L.year * 12 + L.month });
+  }
+  const prev = sheets.filter((x) => x.n < year * 12 + month).sort((a, b) => b.n - a.n);
+  if (!prev.length || prev[0].n < year * 12 + month - 2) return null;  // нет недавнего образца
+  const tpl = prev.find((x) => x.L.days.length >= need) || null;
+  if (!tpl) return null;
+  let name = NH_MONTHS[month - 1];
+  if (ss.getSheetByName(name)) name += ' ' + year;
+  const sh = tpl.sh.copyTo(ss).setName(name);
+  ss.setActiveSheet(sh);
+  ss.moveActiveSheet(prev[0].sh.getIndex() + 1);
+  const L = tpl.L;
+  const cols = L.days.map((d) => d.col).sort((a, b) => a - b);
+  const lastCol = sh.getLastColumn();
+  const head = sh.getRange(1, 1, 1, lastCol).getValues();
+  cols.forEach((c, i) => { head[0][c] = i < need ? new Date(year, month - 1, i + 1) : ''; });
+  sh.getRange(1, 1, 1, lastCol).setValues(head);
+  const n = sh.getLastRow() - 1;
+  if (n > 0) {
+    const rng = sh.getRange(2, 1, n, lastCol);
+    const vals = rng.getValues(), f = rng.getFormulas();
+    const c1 = cols[cols.length - 1];
+    vals.forEach((row, r) => {
+      const fired = cols.every((c) => String(row[c]).trim().toLowerCase() === 'уволен');
+      cols.forEach((c, i) => { row[c] = fired && i < need ? 'уволен' : ''; });
+      for (let c = 0; c < lastCol; c++) {
+        if (f[r][c]) row[c] = f[r][c];                 // формулы как были
+        else if (c > c1) row[c] = '';                  // разовые значения справа от дней
+      }
+    });
+    rng.setValues(vals);
+    const dayRng = sh.getRange(2, cols[0] + 1, n, c1 - cols[0] + 1);
+    dayRng.clearNote();
+  }
+  return sh;
+}
+
 function nhToday_() { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
 
 function nhReport_(st) {
-  let msg = `записано ${st.filled}, обновлено ${st.updated}, оставлено как есть ${st.kept} (ручные правки и off).`;
+  let msg = `записано ${st.filled}, обновлено ${st.updated}, оставлено как есть ${st.kept} (ручные правки и off), подсвечено для проверки ${st.flagged ? st.flagged.length : 0}.`;
   if (st.missing.length) msg += ` Нет в плане: ${st.missing.join(', ')}.`;
   return msg;
 }
@@ -249,7 +314,13 @@ function nhFillSheet_(sheet, opt) {
   const c0 = Math.min(...L.days.map((d) => d.col)), c1 = Math.max(...L.days.map((d) => d.col));
   const block = sheet.getRange(2, c0 + 1, lastRow - 1, c1 - c0 + 1);
   const values = block.getValues();
-  const st = { filled: 0, updated: 0, kept: 0, missing: [] };
+  const notes = block.getNotes();
+  const colors = block.getBackgrounds();
+  // исходный цвет ячеек берём из основного листа (черновик — его копия)
+  const main = opt.main || null;
+  const base = main ? main.getRange(2, c0 + 1, lastRow - 1, c1 - c0 + 1).getBackgrounds() : null;
+  const baseAt = (r, c) => (base && base[r] && base[r][c]) || '#ffffff';
+  const st = { filled: 0, updated: 0, kept: 0, missing: [], flagged: [] };
   names.forEach((name, r) => {
     if (!name.trim()) return;
     const drv = NightHours.planDriverFor(drivers, name);
@@ -257,22 +328,38 @@ function nhFillSheet_(sheet, opt) {
     const key = NightHours.normName(name);
     const res = NightHours.planNightHours(drv, L.year, L.month);
     for (const d of L.days) {
+      const c = d.col - c0;
       if (Date.UTC(L.year, L.month - 1, d.day) >= opt.until) continue;
       const x = res[d.day - 1];
       if (!x || x.hours == null) continue;
-      const cur = values[r][d.col - c0];
+      const cur = values[r][c];
       const ak = key + ':' + d.day;
       if (typeof cur === 'string' && cur.trim()) { st.kept++; continue; }               // off, уволен
       const empty = cur === '' || cur === null;
       const wasAuto = !empty && Object.prototype.hasOwnProperty.call(auto, ak) && auto[ak] === cur;
-      if (!empty && !wasAuto && opt.mode !== 'all') { st.kept++; delete auto[ak]; continue; } // ручная правка
-      if (!empty && cur === x.hours) { auto[ak] = x.hours; continue; }
-      values[r][d.col - c0] = x.hours;
+      if (!empty && !wasAuto && opt.mode !== 'all') {                                  // ручная правка: без подсветки
+        st.kept++; delete auto[ak];
+        if (colors[r][c] === NH_YELLOW || colors[r][c] === NH_ORANGE) colors[r][c] = baseAt(r, c);
+        continue;
+      }
+      const changed = !empty && cur !== x.hours;
+      if (changed || empty) { values[r][c] = x.hours; if (empty) st.filled++; else st.updated++; }
       auto[ak] = x.hours;
-      if (empty) st.filled++; else st.updated++;
+      // пояснение: откуда цифра
+      const why = NightHours.planNightExplain(drv, L.year, L.month, d.day);
+      notes[r][c] = why ? 'По плану: ' + why + (changed ? '\nБыло ' + cur + ', план изменили.' : '') : '';
+      // подсветка: изменилось задним числом (держится до вашей правки) или длинный рейс
+      let color = baseAt(r, c);
+      if (changed || colors[r][c] === NH_ORANGE) color = NH_ORANGE;
+      else if (x.status === 'check' && x.hours > 0) color = NH_YELLOW;
+      colors[r][c] = color;
+      if (changed) st.flagged.push(`${name.trim()}, ${d.day}.${L.month}: было ${cur}, стало ${x.hours} (план изменили)`);
+      else if (empty && x.status === 'check' && x.hours > 0) st.flagged.push(`${name.trim()}, ${d.day}.${L.month}: ${x.hours} ч, ${x.notes.join('; ')}`);
     }
   });
   block.setValues(values);
+  block.setNotes(notes);
+  block.setBackgrounds(colors);
   props.setProperty(autoKey, nhAutoEncode_(auto));
   return st;
 }

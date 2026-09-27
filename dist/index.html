@@ -851,8 +851,12 @@ td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3p
     // Не работа (подтверждено бухгалтерией): отдых, простой, больница, ангар, документы, поломка.
     nonWork: /NO\s*DRIVER|HANGAR|HOSPITAL|SERVICE|BROKEN|BROKE\s*DOWN|\bDOCS\b|URLAUB|VACATION|DOVOLEN|SICK|NEMOC|\bOFF\b/i,
     restColor: '#f79646',
-    // Блок рейса длиннее — «длинный рейс», если ночью нет отметки REST в строке машины, день помечается для проверки.
+    // Блок рейса длиннее — «длинный рейс».
     longBlockHours: 12,
+    // Для проверки помечается ночь глубоко внутри длинного рейса: не меньше checkNightHours ночных часов
+    // позже checkAfterHours от начала рейса (водитель мог стоять, а REST не отмечен).
+    checkAfterHours: 16,
+    checkNightHours: 4,
     // После REST в строке машины водитель отдыхает до отметки «s», если она не дальше чем через столько часов.
     startWaitHours: 24,
     // Пустота между рейсами длиннее — не считается работой.
@@ -1021,20 +1025,51 @@ td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3p
       const hrs = [0, 1, 2, 3, 4, 5, 22, 23].map((h) => Date.UTC(year, month - 1, d, h));
       const cells = hrs.map((t) => res.get(t));
       if (cells.every((c) => !c)) { out.push({ day: d, hours: null, status: 'nodata', notes: ['нет недели в плане'] }); continue; }
-      let hours = 0; const notes = new Set(); let long = null;
+      let hours = 0, deep = 0, long = null;
       hrs.forEach((t, i) => {
         const c = cells[i];
         if (!c) return;
         if (c.kind === 'work' || c.kind === 'gap') {
           hours++;
           const b = c.e.block;
-          if (b && b.text && b.hours > PLAN_RULES.longBlockHours) long = b;
+          if (b && b.text && b.hours > PLAN_RULES.longBlockHours) {
+            long = b;
+            if ((t - b.start) / 3600000 >= PLAN_RULES.checkAfterHours) deep++;
+          }
         }
       });
-      if (long) notes.add(`длинный рейс ${long.hours} ч: «${long.text.split('\n')[0]}»`);
-      out.push({ day: d, hours, status: long ? 'check' : 'ok', notes: [...notes] });
+      const check = deep >= PLAN_RULES.checkNightHours;
+      const notes = [];
+      if (check) notes.push(`${deep} ч ночью внутри рейса «${long.text.split('\n')[0]}» (${long.hours} ч), REST не отмечен — водитель мог стоять`);
+      else if (long) notes.push(`длинный рейс ${long.hours} ч: «${long.text.split('\n')[0]}»`);
+      out.push({ day: d, hours, status: check ? 'check' : 'ok', notes });
     }
     return out;
+  }
+
+  /**
+   * Пояснение к ночи даты: «00–04 рейс «LGG-FRA» · 04–06 отдых: REST в строке машины · 22–24 рейс «…»».
+   */
+  function planNightExplain(driver, year, month, day) {
+    if (!driver._resolved) driver._resolved = resolvePlan(driver.hours);
+    const label = { work: 'рейс', gap: 'между рейсами (работа)', wait: 'не работа: ждёт старта «s», в плане', rest: 'REST', off: 'не работа', empty: 'пусто', none: 'нет в плане' };
+    const parts = [];
+    for (const [a, b] of [[0, 6], [22, 24]]) {
+      let seg = null;
+      for (let h = a; h <= b; h++) {
+        const r = h < b ? driver._resolved.get(Date.UTC(year, month - 1, day, h)) : null;
+        const kind = r ? r.kind : 'none';
+        const text = r && r.e.block && (kind === 'work' || kind === 'off' || kind === 'wait') ? r.e.block.text.split('\n')[0].trim() : '';
+        const why = r && r.why && kind !== 'gap' && kind !== 'wait' ? r.why : '';
+        const id = kind + '|' + text + '|' + why;
+        if (seg && seg.id === id && h < b) { seg.to = h + 1; continue; }
+        if (seg && seg.kind !== 'empty' && seg.kind !== 'none') {
+          parts.push(`${String(seg.from).padStart(2, '0')}–${String(seg.to).padStart(2, '0')} ${label[seg.kind]}${seg.text ? ` «${seg.text}»` : ''}${seg.why ? `: ${seg.why}` : ''}`);
+        }
+        seg = h < b ? { id, kind, text, why, from: h, to: h + 1 } : null;
+      }
+    }
+    return parts.join(' · ');
   }
 
   /** Лента плана за сутки ± часы — для панели подробностей. */
@@ -1054,7 +1089,7 @@ td.c.edited{font-style:italic;text-decoration:underline;text-underline-offset:3p
     DEFAULTS, ACT, readZip, parseDriverCard, mergeCards, nightHours, nightTimeline,
     roundHours, normName, parseCsv, decodeText, parseDispatchPlan, planHint, czMonth,
     parseBonusTable, parseNum, fmtNum, localToUtc, segments, blocks, applyPauseRule,
-    readOds, readXlsx, bonusFromXlsx, planTimelines, planDriverFor, resolvePlan, planNightHours, planDay, PLAN_RULES,
+    readOds, readXlsx, bonusFromXlsx, planTimelines, planDriverFor, resolvePlan, planNightHours, planNightExplain, planDay, PLAN_RULES,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NightHours = api;
