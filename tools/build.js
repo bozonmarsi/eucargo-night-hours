@@ -19,4 +19,5 @@ fs.writeFileSync(path.join(root, 'dist/index.html'), full);
 // Скрипт для Google Таблицы: ядро + меню.
 const gs = `// Ночные часы водителей — Google Apps Script. Собрано из src/core.js и apps-script/main.js.\n${core}\n${fs.readFileSync(path.join(root, 'apps-script/main.js'), 'utf8')}`;
 fs.writeFileSync(path.join(root, 'dist/NightHours.gs'), gs);
+fs.copyFileSync(path.join(root, 'apps-script/appsscript.json'), path.join(root, 'dist/appsscript.json'));
 console.log('dist/night-hours.html', full.length, 'байт; dist/NightHours.gs', gs.length, 'байт');
