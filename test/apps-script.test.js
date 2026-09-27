@@ -34,3 +34,11 @@ test('Apps Script: объединённые ячейки листа превра
   assert.strictEqual(r[6].hours, 2);
   assert.strictEqual(r[7].hours, 4);
 });
+
+test('Apps Script: компактная запись отметок «записано скриптом»', () => {
+  const ctx = load();
+  const auto = { 'A B:1': 2, 'A B:31': 8, 'C D:15': 0.5, 'C D:2': 0 };
+  const s = ctx.nhAutoEncode_(auto);
+  assert.deepStrictEqual({ ...ctx.nhAutoDecode_(s) }, auto);
+  assert.ok(s.length < 100);
+});
